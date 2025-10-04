@@ -181,6 +181,8 @@ func (c *Configuration) handleOption(option, value string) bool {
 		c.RemoveMake = "askyes"
 	case "separatesources":
 		c.SeparateSources = boolValue
+	case "twin":
+		fmt.Println("meow")
 	default:
 		return false
 	}
