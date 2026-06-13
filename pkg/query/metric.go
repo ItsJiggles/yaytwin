@@ -1,17 +1,27 @@
 package query
 
 import (
-	"hash/fnv"
 	"strings"
 
 	"github.com/adrg/strutil"
 )
 
 const minVotes = 30
+const minPopularity = 0.5
+const (
+	separateSourceMax = 45.0
+	separateSourceMin = 5.0
+)
 
-// TODO: Add support for Popularity and LastModified
 func (a *abstractResults) aurSortByMetric(pkg *abstractResult) float64 {
-	return 1 - (minVotes / (minVotes + float64(pkg.votes)))
+	votesScore := 1 - (minVotes / (minVotes + float64(pkg.votes)))
+	if pkg.popularity <= 0 {
+		return votesScore
+	}
+
+	popularityScore := 1 - (minPopularity / (minPopularity + pkg.popularity))
+
+	return (votesScore + popularityScore) / 2
 }
 
 func (a *abstractResults) GetMetric(pkg *abstractResult) float64 {
@@ -38,11 +48,11 @@ func (a *abstractResults) GetMetric(pkg *abstractResult) float64 {
 
 	// slightly overweight sync sources by always giving them max popularity
 	popularity := 1.0
-	if pkg.source == sourceAUR {
+	if pkg.source == "aur" {
 		popularity = a.aurSortByMetric(pkg)
 	}
 
-	sim = sim*0.5 + simDesc*0.2 + popularity*0.3
+	sim = sim*0.35 + simDesc*0.15 + popularity*0.50
 
 	a.distanceCache[pkg.name] = sim
 
@@ -58,29 +68,35 @@ func (a *abstractResults) separateSourceScore(source string, score float64) floa
 		return 50
 	}
 
-	switch source {
-	case sourceAUR:
-		return 0
-	case "core":
-		return 40
-	case "extra":
-		return 30
-	case "community":
-		return 20
-	case "multilib":
-		return 10
-	}
-
 	if v, ok := a.separateSourceCache[source]; ok {
 		return v
 	}
 
-	h := fnv.New32a()
-	h.Write([]byte(source))
-	sourceScore := float64(int(h.Sum32())%9 + 2)
-	a.separateSourceCache[source] = sourceScore
+	// AUR is always lowest priority
+	if source == "aur" {
+		return 0
+	}
 
-	return sourceScore
+	// Score sync repositories based on pacman.conf order (as reflected by dbExecutor.Repos()).
+	// First repo gets max, last repo gets min, evenly distributed across the range.
+	for i, repo := range a.repoOrder {
+		if repo != source {
+			continue
+		}
+
+		n := len(a.repoOrder)
+		if n == 1 {
+			a.separateSourceCache[source] = separateSourceMax
+			return separateSourceMax
+		}
+
+		step := (separateSourceMax - separateSourceMin) / float64(n-1)
+		sourceScore := separateSourceMax - (float64(i) * step)
+		a.separateSourceCache[source] = sourceScore
+		return sourceScore
+	}
+
+	return 0
 }
 
 func (a *abstractResults) calculateMetric(pkg *abstractResult) float64 {

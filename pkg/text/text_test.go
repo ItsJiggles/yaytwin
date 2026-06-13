@@ -81,11 +81,10 @@ func TestContinueTask(t *testing.T) {
 	}
 }
 
-func TestContinueTaskRU(t *testing.T) {
+func TestContinueTaskLocalized(t *testing.T) {
 	strCustom := `
 msgid "yes"
-msgstr "да"
-	`
+msgstr "да"`
 
 	// Create Locales directory and files on temp location
 	tmpDir := t.TempDir()
@@ -129,51 +128,62 @@ msgstr "да"
 	gotext.SetLanguage("")
 }
 
-func TestContinueTaskDE(t *testing.T) {
-	strCustom := `
-msgid "yes"
-msgstr "ja"
-	`
-
-	// Create Locales directory and files on temp location
-	tmpDir := t.TempDir()
-	dirname := path.Join(tmpDir, "en_US")
-	err := os.MkdirAll(dirname, os.ModePerm)
-	require.NoError(t, err)
-
-	fDefault, err := os.Create(path.Join(dirname, "yay.po"))
-	require.NoError(t, err)
-
-	defer fDefault.Close()
-
-	_, err = fDefault.WriteString(strCustom)
-	require.NoError(t, err)
-
-	gotext.Configure(tmpDir, "en_US", "yay")
-	require.Equal(t, "ja", gotext.Get("yes"))
-
-	type args struct {
-		s         string
-		preset    bool
-		noConfirm bool
-		input     string
-	}
+func TestCreateRepoLink(t *testing.T) {
 	tests := []struct {
-		name string
-		args args
-		want bool
+		name     string
+		useColor bool
+		repo     string
+		arch     string
+		pkgName  string
+		text     string
+		want     string
 	}{
-		{name: "default input false", args: args{s: "", input: "n", preset: true, noConfirm: false}, want: false},
-		{name: "default input true", args: args{s: "", input: "y", preset: false, noConfirm: false}, want: true},
-		{name: "custom input true", args: args{s: "", input: "j", preset: false, noConfirm: false}, want: true},
+		{
+			name:     "color disabled returns text",
+			useColor: false,
+			repo:     "core",
+			arch:     "x86_64",
+			pkgName:  "linux",
+			text:     "core/linux",
+			want:     "core/linux",
+		},
+		{
+			name:     "unknown repo returns text",
+			useColor: true,
+			repo:     "unknown",
+			arch:     "x86_64",
+			pkgName:  "linux",
+			text:     "core/linux",
+			want:     "core/linux",
+		},
+		{
+			name:     "aur repo uses package url",
+			useColor: true,
+			repo:     "aur",
+			arch:     "any",
+			pkgName:  "yay",
+			text:     "aur/yay",
+			want:     "\033]8;;https://aur.archlinux.org/packages/yay\033\\aur/yay\033]8;;\033\\",
+		},
+		{
+			name:     "core repo uses arch in url",
+			useColor: true,
+			repo:     "core",
+			arch:     "x86_64",
+			pkgName:  "linux",
+			text:     "core/linux",
+			want:     "\033]8;;https://archlinux.org/packages/core/x86_64/linux\033\\core/linux\033]8;;\033\\",
+		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			in := strings.NewReader(tt.args.input)
-			logger := NewLogger(io.Discard, io.Discard, in, false, "test")
-			got := logger.ContinueTask(tt.args.s, tt.args.preset, tt.args.noConfirm)
-			require.Equal(t, tt.want, got)
+			original := UseColor
+			UseColor = tt.useColor
+			t.Cleanup(func() { UseColor = original })
+
+			got := CreateRepoLink(tt.repo, tt.arch, tt.pkgName, tt.text)
+			assert.Equal(t, tt.want, got)
 		})
 	}
-	gotext.SetLanguage("")
 }

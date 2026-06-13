@@ -1,6 +1,7 @@
 package query
 
 import (
+	"cmp"
 	"context"
 	"sort"
 	"strconv"
@@ -8,7 +9,7 @@ import (
 	"unicode"
 
 	"github.com/Jguer/aur"
-	"github.com/Jguer/go-alpm/v2"
+	alpm "github.com/Jguer/dyalpm"
 	"github.com/adrg/strutil"
 	"github.com/adrg/strutil/metrics"
 	mapset "github.com/deckarep/golang-set/v2"
@@ -19,8 +20,6 @@ import (
 	"github.com/Jguer/yay/v12/pkg/settings/parser"
 	"github.com/Jguer/yay/v12/pkg/text"
 )
-
-const sourceAUR = "aur"
 
 type SearchVerbosity int
 
@@ -37,6 +36,8 @@ type Builder interface {
 	Results(dbExecutor db.Executor, verboseSearch SearchVerbosity) error
 	GetTargets(include, exclude intrange.IntRanges, otherExclude mapset.Set[string]) ([]string, error)
 }
+
+type SortFunc func(pkgA, pkgB abstractResult) int
 
 type SourceQueryBuilder struct {
 	results           []abstractResult
@@ -77,20 +78,24 @@ func NewSourceQueryBuilder(
 }
 
 type abstractResult struct {
-	source      string
-	name        string
-	description string
-	votes       int
-	provides    []string
+	source         string
+	name           string
+	description    string
+	packageBase    string
+	votes          int
+	popularity     float64
+	firstSubmitted int
+	lastModified   int
+	provides       []string
 }
 
 type abstractResults struct {
 	results         []abstractResult
 	search          string
-	bottomUp        bool
 	metric          strutil.StringMetric
 	separateSources bool
-	sortBy          string
+	sortByFunc      SortFunc
+	repoOrder       []string
 
 	distanceCache       map[string]float64
 	separateSourceCache map[string]float64
@@ -102,29 +107,73 @@ func (a *abstractResults) Swap(i, j int) { a.results[i], a.results[j] = a.result
 func (a *abstractResults) Less(i, j int) bool {
 	pkgA := a.results[i]
 	pkgB := a.results[j]
+	// Sort in descending order by default
+	return a.sortByFunc(pkgA, pkgB) > 0
+}
 
-	var cmpResult bool
+func (a *abstractResults) GetSortFunc(sortBy string, bottomUp bool) SortFunc {
+	var sortFunc SortFunc
 
-	switch a.sortBy {
+	// Primary sort
+	switch sortBy {
+	case "base":
+		sortFunc = func(pkgA, pkgB abstractResult) int {
+			return cmp.Compare(pkgA.packageBase, pkgB.packageBase)
+		}
+	case "modified":
+		sortFunc = func(pkgA, pkgB abstractResult) int {
+			return cmp.Compare(pkgA.lastModified, pkgB.lastModified)
+		}
 	case "name":
-		cmpResult = !text.LessRunes([]rune(pkgA.name), []rune(pkgB.name))
-		if a.separateSources {
-			cmpSources := strings.Compare(pkgA.source, pkgB.source)
-			if cmpSources != 0 {
-				cmpResult = cmpSources > 0
-			}
+		sortFunc = func(pkgA, pkgB abstractResult) int {
+			return cmp.Compare(pkgA.name, pkgB.name)
+		}
+	case "popularity":
+		sortFunc = func(pkgA, pkgB abstractResult) int {
+			return cmp.Compare(pkgA.popularity, pkgB.popularity)
+		}
+	case "submitted":
+		sortFunc = func(pkgA, pkgB abstractResult) int {
+			return cmp.Compare(pkgA.firstSubmitted, pkgB.firstSubmitted)
+		}
+	case "votes":
+		sortFunc = func(pkgA, pkgB abstractResult) int {
+			return cmp.Compare(pkgA.votes, pkgB.votes)
 		}
 	default:
-		simA := a.calculateMetric(&pkgA)
-		simB := a.calculateMetric(&pkgB)
-		cmpResult = simA > simB
+		sortFunc = func(pkgA, pkgB abstractResult) int {
+			return 0
+		}
 	}
 
-	if a.bottomUp {
-		cmpResult = !cmpResult
+	// Sort by metric as a tie-breaker. Also handle separating sources when not a tie
+	{
+		originalSortFunc := sortFunc
+		sortFunc = func(pkgA, pkgB abstractResult) int {
+			if cmpResult := originalSortFunc(pkgA, pkgB); cmpResult != 0 {
+				if a.separateSources {
+					if cmpSources := strings.Compare(pkgA.source, pkgB.source); cmpSources != 0 {
+						return cmpSources
+					}
+				}
+				return cmpResult
+			}
+
+			metricA := a.calculateMetric(&pkgA)
+			metricB := a.calculateMetric(&pkgB)
+			return cmp.Compare(metricA, metricB)
+		}
 	}
 
-	return cmpResult
+	if bottomUp {
+		// Invert sort for bottom-up sorting
+		originalSortFunc := sortFunc
+		sortFunc = func(pkgA, pkgB abstractResult) int {
+			return -originalSortFunc(pkgA, pkgB)
+		}
+	}
+
+	return sortFunc
 }
 
 func (s *SourceQueryBuilder) Execute(ctx context.Context, dbExecutor db.Executor, pkgS []string) {
@@ -132,25 +181,58 @@ func (s *SourceQueryBuilder) Execute(ctx context.Context, dbExecutor db.Executor
 
 	pkgS = RemoveInvalidTargets(s.logger, pkgS, s.targetMode)
 
-	metric := &metrics.Hamming{
+	metric := &metrics.JaroWinkler{
 		CaseSensitive: false,
 	}
 
 	sortableResults := &abstractResults{
 		results:             []abstractResult{},
 		search:              strings.Join(pkgS, ""),
-		bottomUp:            s.bottomUp,
 		metric:              metric,
 		separateSources:     s.separateSources,
-		sortBy:              s.sortBy,
+		repoOrder:           dbExecutor.Repos(),
 		distanceCache:       map[string]float64{},
 		separateSourceCache: map[string]float64{},
+	}
+	sortableResults.sortByFunc = sortableResults.GetSortFunc(s.sortBy, s.bottomUp)
+
+	var repoResults []alpm.Package
+	if s.targetMode.AtLeastRepo() {
+		repoResults = dbExecutor.SyncPackages(pkgS...)
+
+		for i := range repoResults {
+			dbName := repoResults[i].DB().Name()
+			if s.queryMap[dbName] == nil {
+				s.queryMap[dbName] = map[string]any{}
+			}
+
+			s.queryMap[dbName][repoResults[i].Name()] = repoResults[i]
+
+			rawProvides := repoResults[i].Provides()
+
+			provides := make([]string, len(rawProvides))
+			for j := range rawProvides {
+				provides[j] = rawProvides[j].Name
+			}
+
+			sortableResults.results = append(sortableResults.results, abstractResult{
+				source:         repoResults[i].DB().Name(),
+				name:           repoResults[i].Name(),
+				description:    repoResults[i].Description(),
+				packageBase:    repoResults[i].Base(),
+				votes:          -1,
+				popularity:     -1,
+				firstSubmitted: -1,
+				lastModified:   -1,
+				provides:       provides,
+			})
+		}
 	}
 
 	if s.targetMode.AtLeastAUR() {
 		var aurResults []aur.Pkg
 		aurResults, aurErr = queryAUR(ctx, s.aurClient, pkgS, s.searchBy)
-		dbName := sourceAUR
+		dbName := "aur"
 
 		for i := range aurResults {
 			if s.queryMap[dbName] == nil {
@@ -166,40 +248,15 @@ func (s *SourceQueryBuilder) Execute(ctx context.Context, dbExecutor db.Executor
 			s.queryMap[dbName][aurResults[i].Name] = aurResults[i]
 
 			sortableResults.results = append(sortableResults.results, abstractResult{
-				source:      dbName,
-				name:        aurResults[i].Name,
-				description: aurResults[i].Description,
-				provides:    aurResults[i].Provides,
-				votes:       aurResults[i].NumVotes,
-			})
-		}
-	}
-
-	var repoResults []alpm.IPackage
-	if s.targetMode.AtLeastRepo() {
-		repoResults = dbExecutor.SyncPackages(pkgS...)
-
-		for i := range repoResults {
-			dbName := repoResults[i].DB().Name()
-			if s.queryMap[dbName] == nil {
-				s.queryMap[dbName] = map[string]any{}
-			}
-
-			s.queryMap[dbName][repoResults[i].Name()] = repoResults[i]
-
-			rawProvides := repoResults[i].Provides().Slice()
-
-			provides := make([]string, len(rawProvides))
-			for j := range rawProvides {
-				provides[j] = rawProvides[j].Name
-			}
-
-			sortableResults.results = append(sortableResults.results, abstractResult{
-				source:      repoResults[i].DB().Name(),
-				name:        repoResults[i].Name(),
-				description: repoResults[i].Description(),
-				provides:    provides,
-				votes:       -1,
+				source:         dbName,
+				name:           aurResults[i].Name,
+				description:    aurResults[i].Description,
+				packageBase:    aurResults[i].PackageBase,
+				votes:          aurResults[i].NumVotes,
+				popularity:     aurResults[i].Popularity,
+				firstSubmitted: aurResults[i].FirstSubmitted,
+				lastModified:   aurResults[i].LastModified,
+				provides:       aurResults[i].Provides,
 			})
 		}
 	}
@@ -238,7 +295,7 @@ func (s *SourceQueryBuilder) Results(dbExecutor db.Executor, verboseSearch Searc
 		switch pPkg := pkg.(type) {
 		case aur.Pkg:
 			toPrint += aurPkgSearchString(&pPkg, dbExecutor, s.singleLineResults)
-		case alpm.IPackage:
+		case alpm.Package:
 			toPrint += syncPkgSearchString(pPkg, dbExecutor, s.singleLineResults)
 		}
 

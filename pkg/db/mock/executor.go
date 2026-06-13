@@ -6,11 +6,11 @@ import (
 	"github.com/Jguer/yay/v12/pkg/db"
 	"github.com/Jguer/yay/v12/pkg/text"
 
-	"github.com/Jguer/go-alpm/v2"
+	alpm "github.com/Jguer/dyalpm"
 )
 
 type (
-	IPackage = alpm.IPackage
+	IPackage = alpm.Package
 	Depend   = alpm.Depend
 	Upgrade  = db.Upgrade
 )
@@ -25,7 +25,7 @@ type DBExecutor struct {
 	LocalPackagesFn               func() []IPackage
 	LocalSatisfierExistsFn        func(string) bool
 	PackageDependsFn              func(IPackage) []Depend
-	PackageOptionalDependsFn      func(alpm.IPackage) []alpm.Depend
+	PackageOptionalDependsFn      func(alpm.Package) []alpm.Depend
 	PackageProvidesFn             func(IPackage) []Depend
 	PackagesFromGroupFn           func(string) []IPackage
 	PackagesFromGroupAndDBFn      func(string, string) ([]IPackage, error)
@@ -167,7 +167,8 @@ func (t *DBExecutor) Repos() []string {
 	if t.ReposFn != nil {
 		return t.ReposFn()
 	}
-	panic("implement me")
+	// Tests that don't care about repo ordering shouldn't need to stub this out.
+	return nil
 }
 
 func (t *DBExecutor) SatisfierFromDB(s, s2 string) (IPackage, error) {

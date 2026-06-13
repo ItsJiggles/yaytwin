@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Jguer/aur"
 
@@ -19,8 +20,16 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// linuxCkLastModified matches the mock linux-ck package fixture.
+const linuxCkLastModified = 1646250901
+
+var linuxCkFixedNow = time.Unix(linuxCkLastModified+365*24*3600, 0)
+
 func TestSourceQueryBuilder(t *testing.T) {
-	t.Parallel()
+	// Cannot run in parallel: mutates text.NowFunc, a package-level var.
+	text.NowFunc = func() time.Time { return linuxCkFixedNow }
+	t.Cleanup(func() { text.NowFunc = time.Now })
+
 	type testCase struct {
 		desc              string
 		search            []string
@@ -37,143 +46,87 @@ func TestSourceQueryBuilder(t *testing.T) {
 
 	testCases := []testCase{
 		{
-			desc:            "sort-by-votes bottomup separatesources",
+			desc:            "sort-by-metric bottomup separatesources",
 			search:          []string{"linux"},
 			bottomUp:        true,
 			separateSources: true,
-			sortBy:          "votes",
+			sortBy:          "",
 			verbosity:       Detailed,
 			wantResults:     []string{"linux-ck", "linux-zen", "linux"},
 			wantOutput: []string{
-				"\x1b]8;;https://aur.archlinux.org/packages/linux-ck\x1b\\\x1b[1m\x1b[34maur\x1b[0m\x1b[0m/\x1b[1mlinux-ck\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.12-1\x1b[0m\x1b[1m (+450\x1b[0m \x1b[1m1.51) \x1b[0m\n    The Linux-ck kernel and modules with ck's hrtimer patches\n",
+				"\x1b]8;;https://aur.archlinux.org/packages/linux-ck\x1b\\\x1b[1m\x1b[34maur\x1b[0m\x1b[0m/\x1b[1mlinux-ck\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.12-1\x1b[0m\x1b[1m (+450\x1b[0m \x1b[1m1.51) \x1b[0m\x1b[36m[365d]\x1b[0m \n    The Linux-ck kernel and modules with ck's hrtimer patches\n",
 				"\x1b]8;;https://archlinux.org/packages/core/x86_64/linux-zen\x1b\\\x1b[1m\x1b[33mcore\x1b[0m\x1b[0m/\x1b[1mlinux-zen\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.0\x1b[0m\x1b[1m (1.0 B 1.0 B) \x1b[0m\n    The Linux ZEN kernel and modules\n",
 				"\x1b]8;;https://archlinux.org/packages/core/x86_64/linux\x1b\\\x1b[1m\x1b[33mcore\x1b[0m\x1b[0m/\x1b[1mlinux\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.0\x1b[0m\x1b[1m (1.0 B 1.0 B) \x1b[0m\n    The Linux kernel and modules\n",
 			},
 		},
 		{
-			desc:            "sort-by-votes topdown separatesources",
+			desc:            "sort-by-metric topdown separatesources",
 			search:          []string{"linux"},
 			bottomUp:        false,
 			separateSources: true,
-			sortBy:          "votes",
+			sortBy:          "",
 			verbosity:       Detailed,
 			wantResults:     []string{"linux", "linux-zen", "linux-ck"},
 			wantOutput: []string{
 				"\x1b]8;;https://archlinux.org/packages/core/x86_64/linux\x1b\\\x1b[1m\x1b[33mcore\x1b[0m\x1b[0m/\x1b[1mlinux\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.0\x1b[0m\x1b[1m (1.0 B 1.0 B) \x1b[0m\n    The Linux kernel and modules\n",
 				"\x1b]8;;https://archlinux.org/packages/core/x86_64/linux-zen\x1b\\\x1b[1m\x1b[33mcore\x1b[0m\x1b[0m/\x1b[1mlinux-zen\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.0\x1b[0m\x1b[1m (1.0 B 1.0 B) \x1b[0m\n    The Linux ZEN kernel and modules\n",
-				"\x1b]8;;https://aur.archlinux.org/packages/linux-ck\x1b\\\x1b[1m\x1b[34maur\x1b[0m\x1b[0m/\x1b[1mlinux-ck\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.12-1\x1b[0m\x1b[1m (+450\x1b[0m \x1b[1m1.51) \x1b[0m\n    The Linux-ck kernel and modules with ck's hrtimer patches\n",
+				"\x1b]8;;https://aur.archlinux.org/packages/linux-ck\x1b\\\x1b[1m\x1b[34maur\x1b[0m\x1b[0m/\x1b[1mlinux-ck\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.12-1\x1b[0m\x1b[1m (+450\x1b[0m \x1b[1m1.51) \x1b[0m\x1b[36m[365d]\x1b[0m \n    The Linux-ck kernel and modules with ck's hrtimer patches\n",
 			},
 		},
 		{
-			desc:            "sort-by-votes bottomup noseparatesources",
+			desc:            "sort-by-metric bottomup noseparatesources",
 			search:          []string{"linux"},
 			bottomUp:        true,
 			separateSources: false,
-			sortBy:          "votes",
+			sortBy:          "",
 			verbosity:       Detailed,
-			wantResults:     []string{"linux-zen", "linux-ck", "linux"},
+			wantResults:     []string{"linux-ck", "linux-zen", "linux"},
 			wantOutput: []string{
+				"\x1b]8;;https://aur.archlinux.org/packages/linux-ck\x1b\\\x1b[1m\x1b[34maur\x1b[0m\x1b[0m/\x1b[1mlinux-ck\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.12-1\x1b[0m\x1b[1m (+450\x1b[0m \x1b[1m1.51) \x1b[0m\x1b[36m[365d]\x1b[0m \n    The Linux-ck kernel and modules with ck's hrtimer patches\n",
 				"\x1b]8;;https://archlinux.org/packages/core/x86_64/linux-zen\x1b\\\x1b[1m\x1b[33mcore\x1b[0m\x1b[0m/\x1b[1mlinux-zen\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.0\x1b[0m\x1b[1m (1.0 B 1.0 B) \x1b[0m\n    The Linux ZEN kernel and modules\n",
-				"\x1b]8;;https://aur.archlinux.org/packages/linux-ck\x1b\\\x1b[1m\x1b[34maur\x1b[0m\x1b[0m/\x1b[1mlinux-ck\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.12-1\x1b[0m\x1b[1m (+450\x1b[0m \x1b[1m1.51) \x1b[0m\n    The Linux-ck kernel and modules with ck's hrtimer patches\n",
 				"\x1b]8;;https://archlinux.org/packages/core/x86_64/linux\x1b\\\x1b[1m\x1b[33mcore\x1b[0m\x1b[0m/\x1b[1mlinux\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.0\x1b[0m\x1b[1m (1.0 B 1.0 B) \x1b[0m\n    The Linux kernel and modules\n",
 			},
 		},
 		{
-			desc:            "sort-by-votes topdown noseparatesources",
+			desc:            "sort-by-metric topdown noseparatesources",
 			search:          []string{"linux"},
 			bottomUp:        false,
 			separateSources: false,
-			sortBy:          "votes",
+			sortBy:          "",
 			verbosity:       Detailed,
-			wantResults:     []string{"linux", "linux-ck", "linux-zen"},
+			wantResults:     []string{"linux", "linux-zen", "linux-ck"},
 			wantOutput: []string{
 				"\x1b]8;;https://archlinux.org/packages/core/x86_64/linux\x1b\\\x1b[1m\x1b[33mcore\x1b[0m\x1b[0m/\x1b[1mlinux\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.0\x1b[0m\x1b[1m (1.0 B 1.0 B) \x1b[0m\n    The Linux kernel and modules\n",
-				"\x1b]8;;https://aur.archlinux.org/packages/linux-ck\x1b\\\x1b[1m\x1b[34maur\x1b[0m\x1b[0m/\x1b[1mlinux-ck\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.12-1\x1b[0m\x1b[1m (+450\x1b[0m \x1b[1m1.51) \x1b[0m\n    The Linux-ck kernel and modules with ck's hrtimer patches\n",
 				"\x1b]8;;https://archlinux.org/packages/core/x86_64/linux-zen\x1b\\\x1b[1m\x1b[33mcore\x1b[0m\x1b[0m/\x1b[1mlinux-zen\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.0\x1b[0m\x1b[1m (1.0 B 1.0 B) \x1b[0m\n    The Linux ZEN kernel and modules\n",
+				"\x1b]8;;https://aur.archlinux.org/packages/linux-ck\x1b\\\x1b[1m\x1b[34maur\x1b[0m\x1b[0m/\x1b[1mlinux-ck\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.12-1\x1b[0m\x1b[1m (+450\x1b[0m \x1b[1m1.51) \x1b[0m\x1b[36m[365d]\x1b[0m \n    The Linux-ck kernel and modules with ck's hrtimer patches\n",
 			},
 		},
 		{
-			desc:            "sort-by-name bottomup separatesources",
+			desc:            "sort-by-metric bottomup separatesources number-menu",
 			search:          []string{"linux"},
 			bottomUp:        true,
 			separateSources: true,
-			sortBy:          "name",
-			verbosity:       Detailed,
-			wantResults:     []string{"linux-ck", "linux", "linux-zen"},
-			wantOutput: []string{
-				"\x1b]8;;https://aur.archlinux.org/packages/linux-ck\x1b\\\x1b[1m\x1b[34maur\x1b[0m\x1b[0m/\x1b[1mlinux-ck\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.12-1\x1b[0m\x1b[1m (+450\x1b[0m \x1b[1m1.51) \x1b[0m\n    The Linux-ck kernel and modules with ck's hrtimer patches\n",
-				"\x1b]8;;https://archlinux.org/packages/core/x86_64/linux\x1b\\\x1b[1m\x1b[33mcore\x1b[0m\x1b[0m/\x1b[1mlinux\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.0\x1b[0m\x1b[1m (1.0 B 1.0 B) \x1b[0m\n    The Linux kernel and modules\n",
-				"\x1b]8;;https://archlinux.org/packages/core/x86_64/linux-zen\x1b\\\x1b[1m\x1b[33mcore\x1b[0m\x1b[0m/\x1b[1mlinux-zen\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.0\x1b[0m\x1b[1m (1.0 B 1.0 B) \x1b[0m\n    The Linux ZEN kernel and modules\n",
-			},
-		},
-		{
-			desc:            "sort-by-name topdown separatesources",
-			search:          []string{"linux"},
-			bottomUp:        false,
-			separateSources: true,
-			sortBy:          "name",
-			verbosity:       Detailed,
-			wantResults:     []string{"linux-zen", "linux", "linux-ck"},
-			wantOutput: []string{
-				"\x1b]8;;https://archlinux.org/packages/core/x86_64/linux-zen\x1b\\\x1b[1m\x1b[33mcore\x1b[0m\x1b[0m/\x1b[1mlinux-zen\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.0\x1b[0m\x1b[1m (1.0 B 1.0 B) \x1b[0m\n    The Linux ZEN kernel and modules\n",
-				"\x1b]8;;https://archlinux.org/packages/core/x86_64/linux\x1b\\\x1b[1m\x1b[33mcore\x1b[0m\x1b[0m/\x1b[1mlinux\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.0\x1b[0m\x1b[1m (1.0 B 1.0 B) \x1b[0m\n    The Linux kernel and modules\n",
-				"\x1b]8;;https://aur.archlinux.org/packages/linux-ck\x1b\\\x1b[1m\x1b[34maur\x1b[0m\x1b[0m/\x1b[1mlinux-ck\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.12-1\x1b[0m\x1b[1m (+450\x1b[0m \x1b[1m1.51) \x1b[0m\n    The Linux-ck kernel and modules with ck's hrtimer patches\n",
-			},
-		},
-		{
-			desc:            "sort-by-name bottomup noseparatesources",
-			search:          []string{"linux"},
-			bottomUp:        true,
-			separateSources: false,
-			sortBy:          "name",
-			verbosity:       Detailed,
-			wantResults:     []string{"linux", "linux-ck", "linux-zen"},
-			wantOutput: []string{
-				"\x1b]8;;https://archlinux.org/packages/core/x86_64/linux\x1b\\\x1b[1m\x1b[33mcore\x1b[0m\x1b[0m/\x1b[1mlinux\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.0\x1b[0m\x1b[1m (1.0 B 1.0 B) \x1b[0m\n    The Linux kernel and modules\n",
-				"\x1b]8;;https://aur.archlinux.org/packages/linux-ck\x1b\\\x1b[1m\x1b[34maur\x1b[0m\x1b[0m/\x1b[1mlinux-ck\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.12-1\x1b[0m\x1b[1m (+450\x1b[0m \x1b[1m1.51) \x1b[0m\n    The Linux-ck kernel and modules with ck's hrtimer patches\n",
-				"\x1b]8;;https://archlinux.org/packages/core/x86_64/linux-zen\x1b\\\x1b[1m\x1b[33mcore\x1b[0m\x1b[0m/\x1b[1mlinux-zen\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.0\x1b[0m\x1b[1m (1.0 B 1.0 B) \x1b[0m\n    The Linux ZEN kernel and modules\n",
-			},
-		},
-		{
-			desc:            "sort-by-name topdown noseparatesources",
-			search:          []string{"linux"},
-			bottomUp:        false,
-			separateSources: false,
-			sortBy:          "name",
-			verbosity:       Detailed,
-			wantResults:     []string{"linux-zen", "linux-ck", "linux"},
-			wantOutput: []string{
-				"\x1b]8;;https://archlinux.org/packages/core/x86_64/linux-zen\x1b\\\x1b[1m\x1b[33mcore\x1b[0m\x1b[0m/\x1b[1mlinux-zen\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.0\x1b[0m\x1b[1m (1.0 B 1.0 B) \x1b[0m\n    The Linux ZEN kernel and modules\n",
-				"\x1b]8;;https://aur.archlinux.org/packages/linux-ck\x1b\\\x1b[1m\x1b[34maur\x1b[0m\x1b[0m/\x1b[1mlinux-ck\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.12-1\x1b[0m\x1b[1m (+450\x1b[0m \x1b[1m1.51) \x1b[0m\n    The Linux-ck kernel and modules with ck's hrtimer patches\n",
-				"\x1b]8;;https://archlinux.org/packages/core/x86_64/linux\x1b\\\x1b[1m\x1b[33mcore\x1b[0m\x1b[0m/\x1b[1mlinux\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.0\x1b[0m\x1b[1m (1.0 B 1.0 B) \x1b[0m\n    The Linux kernel and modules\n",
-			},
-		},
-		{
-			desc:            "sort-by-votes bottomup separatesources number-menu",
-			search:          []string{"linux"},
-			bottomUp:        true,
-			separateSources: true,
-			sortBy:          "votes",
+			sortBy:          "",
 			verbosity:       NumberMenu,
 			wantResults:     []string{"linux-ck", "linux-zen", "linux"},
 			wantOutput: []string{
-				"\x1b[35m3\x1b[0m \x1b]8;;https://aur.archlinux.org/packages/linux-ck\x1b\\\x1b[1m\x1b[34maur\x1b[0m\x1b[0m/\x1b[1mlinux-ck\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.12-1\x1b[0m\x1b[1m (+450\x1b[0m \x1b[1m1.51) \x1b[0m\n    The Linux-ck kernel and modules with ck's hrtimer patches\n",
+				"\x1b[35m3\x1b[0m \x1b]8;;https://aur.archlinux.org/packages/linux-ck\x1b\\\x1b[1m\x1b[34maur\x1b[0m\x1b[0m/\x1b[1mlinux-ck\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.12-1\x1b[0m\x1b[1m (+450\x1b[0m \x1b[1m1.51) \x1b[0m\x1b[36m[365d]\x1b[0m \n    The Linux-ck kernel and modules with ck's hrtimer patches\n",
 				"\x1b[35m2\x1b[0m \x1b]8;;https://archlinux.org/packages/core/x86_64/linux-zen\x1b\\\x1b[1m\x1b[33mcore\x1b[0m\x1b[0m/\x1b[1mlinux-zen\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.0\x1b[0m\x1b[1m (1.0 B 1.0 B) \x1b[0m\n    The Linux ZEN kernel and modules\n",
 				"\x1b[35m1\x1b[0m \x1b]8;;https://archlinux.org/packages/core/x86_64/linux\x1b\\\x1b[1m\x1b[33mcore\x1b[0m\x1b[0m/\x1b[1mlinux\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.0\x1b[0m\x1b[1m (1.0 B 1.0 B) \x1b[0m\n    The Linux kernel and modules\n",
 			},
 		},
 		{
-			desc:            "sort-by-votes topdown separatesources number-menu",
+			desc:            "sort-by-metric topdown separatesources number-menu",
 			search:          []string{"linux"},
 			bottomUp:        false,
 			separateSources: true,
-			sortBy:          "votes",
+			sortBy:          "",
 			verbosity:       NumberMenu,
 			wantResults:     []string{"linux", "linux-zen", "linux-ck"},
 			wantOutput: []string{
 				"\x1b[35m1\x1b[0m \x1b]8;;https://archlinux.org/packages/core/x86_64/linux\x1b\\\x1b[1m\x1b[33mcore\x1b[0m\x1b[0m/\x1b[1mlinux\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.0\x1b[0m\x1b[1m (1.0 B 1.0 B) \x1b[0m\n    The Linux kernel and modules\n",
 				"\x1b[35m2\x1b[0m \x1b]8;;https://archlinux.org/packages/core/x86_64/linux-zen\x1b\\\x1b[1m\x1b[33mcore\x1b[0m\x1b[0m/\x1b[1mlinux-zen\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.0\x1b[0m\x1b[1m (1.0 B 1.0 B) \x1b[0m\n    The Linux ZEN kernel and modules\n",
-				"\x1b[35m3\x1b[0m \x1b]8;;https://aur.archlinux.org/packages/linux-ck\x1b\\\x1b[1m\x1b[34maur\x1b[0m\x1b[0m/\x1b[1mlinux-ck\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.12-1\x1b[0m\x1b[1m (+450\x1b[0m \x1b[1m1.51) \x1b[0m\n    The Linux-ck kernel and modules with ck's hrtimer patches\n",
+				"\x1b[35m3\x1b[0m \x1b]8;;https://aur.archlinux.org/packages/linux-ck\x1b\\\x1b[1m\x1b[34maur\x1b[0m\x1b[0m/\x1b[1mlinux-ck\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.12-1\x1b[0m\x1b[1m (+450\x1b[0m \x1b[1m1.51) \x1b[0m\x1b[36m[365d]\x1b[0m \n    The Linux-ck kernel and modules with ck's hrtimer patches\n",
 			},
 		},
 		{
@@ -185,7 +138,7 @@ func TestSourceQueryBuilder(t *testing.T) {
 			verbosity:       NumberMenu,
 			wantResults:     []string{"linux-ck", "linux", "linux-zen"},
 			wantOutput: []string{
-				"\x1b[35m3\x1b[0m \x1b]8;;https://aur.archlinux.org/packages/linux-ck\x1b\\\x1b[1m\x1b[34maur\x1b[0m\x1b[0m/\x1b[1mlinux-ck\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.12-1\x1b[0m\x1b[1m (+450\x1b[0m \x1b[1m1.51) \x1b[0m\n    The Linux-ck kernel and modules with ck's hrtimer patches\n",
+				"\x1b[35m3\x1b[0m \x1b]8;;https://aur.archlinux.org/packages/linux-ck\x1b\\\x1b[1m\x1b[34maur\x1b[0m\x1b[0m/\x1b[1mlinux-ck\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.12-1\x1b[0m\x1b[1m (+450\x1b[0m \x1b[1m1.51) \x1b[0m\x1b[36m[365d]\x1b[0m \n    The Linux-ck kernel and modules with ck's hrtimer patches\n",
 				"\x1b[35m2\x1b[0m \x1b]8;;https://archlinux.org/packages/core/x86_64/linux\x1b\\\x1b[1m\x1b[33mcore\x1b[0m\x1b[0m/\x1b[1mlinux\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.0\x1b[0m\x1b[1m (1.0 B 1.0 B) \x1b[0m\n    The Linux kernel and modules\n",
 				"\x1b[35m1\x1b[0m \x1b]8;;https://archlinux.org/packages/core/x86_64/linux-zen\x1b\\\x1b[1m\x1b[33mcore\x1b[0m\x1b[0m/\x1b[1mlinux-zen\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.0\x1b[0m\x1b[1m (1.0 B 1.0 B) \x1b[0m\n    The Linux ZEN kernel and modules\n",
 			},
@@ -201,7 +154,7 @@ func TestSourceQueryBuilder(t *testing.T) {
 			wantOutput: []string{
 				"\x1b[35m1\x1b[0m \x1b]8;;https://archlinux.org/packages/core/x86_64/linux-zen\x1b\\\x1b[1m\x1b[33mcore\x1b[0m\x1b[0m/\x1b[1mlinux-zen\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.0\x1b[0m\x1b[1m (1.0 B 1.0 B) \x1b[0m\n    The Linux ZEN kernel and modules\n",
 				"\x1b[35m2\x1b[0m \x1b]8;;https://archlinux.org/packages/core/x86_64/linux\x1b\\\x1b[1m\x1b[33mcore\x1b[0m\x1b[0m/\x1b[1mlinux\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.0\x1b[0m\x1b[1m (1.0 B 1.0 B) \x1b[0m\n    The Linux kernel and modules\n",
-				"\x1b[35m3\x1b[0m \x1b]8;;https://aur.archlinux.org/packages/linux-ck\x1b\\\x1b[1m\x1b[34maur\x1b[0m\x1b[0m/\x1b[1mlinux-ck\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.12-1\x1b[0m\x1b[1m (+450\x1b[0m \x1b[1m1.51) \x1b[0m\n    The Linux-ck kernel and modules with ck's hrtimer patches\n",
+				"\x1b[35m3\x1b[0m \x1b]8;;https://aur.archlinux.org/packages/linux-ck\x1b\\\x1b[1m\x1b[34maur\x1b[0m\x1b[0m/\x1b[1mlinux-ck\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.12-1\x1b[0m\x1b[1m (+450\x1b[0m \x1b[1m1.51) \x1b[0m\x1b[36m[365d]\x1b[0m \n    The Linux-ck kernel and modules with ck's hrtimer patches\n",
 			},
 		},
 		{
@@ -255,7 +208,7 @@ func TestSourceQueryBuilder(t *testing.T) {
 			singleLineResults: true,
 			wantResults:       []string{"linux-ck", "linux", "linux-zen"},
 			wantOutput: []string{
-				"\x1b]8;;https://aur.archlinux.org/packages/linux-ck\x1b\\\x1b[1m\x1b[34maur\x1b[0m\x1b[0m/\x1b[1mlinux-ck\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.12-1\x1b[0m\x1b[1m (+450\x1b[0m \x1b[1m1.51) \x1b[0m\tThe Linux-ck kernel and modules with ck's hrtimer patches\n",
+				"\x1b]8;;https://aur.archlinux.org/packages/linux-ck\x1b\\\x1b[1m\x1b[34maur\x1b[0m\x1b[0m/\x1b[1mlinux-ck\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.12-1\x1b[0m\x1b[1m (+450\x1b[0m \x1b[1m1.51) \x1b[0m\x1b[36m[365d]\x1b[0m \tThe Linux-ck kernel and modules with ck's hrtimer patches\n",
 				"\x1b]8;;https://archlinux.org/packages/core/x86_64/linux\x1b\\\x1b[1m\x1b[33mcore\x1b[0m\x1b[0m/\x1b[1mlinux\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.0\x1b[0m\x1b[1m (1.0 B 1.0 B) \x1b[0m\tThe Linux kernel and modules\n",
 				"\x1b]8;;https://archlinux.org/packages/core/x86_64/linux-zen\x1b\\\x1b[1m\x1b[33mcore\x1b[0m\x1b[0m/\x1b[1mlinux-zen\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.0\x1b[0m\x1b[1m (1.0 B 1.0 B) \x1b[0m\tThe Linux ZEN kernel and modules\n",
 			},
@@ -271,7 +224,7 @@ func TestSourceQueryBuilder(t *testing.T) {
 			targetMode:      parser.ModeAUR,
 			wantResults:     []string{"linux-ck"},
 			wantOutput: []string{
-				"\x1b]8;;https://aur.archlinux.org/packages/linux-ck\x1b\\\x1b[1m\x1b[34maur\x1b[0m\x1b[0m/\x1b[1mlinux-ck\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.12-1\x1b[0m\x1b[1m (+450\x1b[0m \x1b[1m1.51) \x1b[0m\n    The Linux-ck kernel and modules with ck's hrtimer patches\n",
+				"\x1b]8;;https://aur.archlinux.org/packages/linux-ck\x1b\\\x1b[1m\x1b[34maur\x1b[0m\x1b[0m/\x1b[1mlinux-ck\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.12-1\x1b[0m\x1b[1m (+450\x1b[0m \x1b[1m1.51) \x1b[0m\x1b[36m[365d]\x1b[0m \n    The Linux-ck kernel and modules with ck's hrtimer patches\n",
 			},
 		},
 		{
@@ -283,16 +236,21 @@ func TestSourceQueryBuilder(t *testing.T) {
 			targetMode:      parser.ModeAUR,
 			wantResults:     []string{"linux-ck"},
 			wantOutput: []string{
-				"\x1b]8;;https://aur.archlinux.org/packages/linux-ck\x1b\\\x1b[1m\x1b[34maur\x1b[0m\x1b[0m/\x1b[1mlinux-ck\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.12-1\x1b[0m\x1b[1m (+450\x1b[0m \x1b[1m1.51) \x1b[0m\n    The Linux-ck kernel and modules with ck's hrtimer patches\n",
+				"\x1b]8;;https://aur.archlinux.org/packages/linux-ck\x1b\\\x1b[1m\x1b[34maur\x1b[0m\x1b[0m/\x1b[1mlinux-ck\x1b[0m\x1b]8;;\x1b\\ \x1b[36m5.16.12-1\x1b[0m\x1b[1m (+450\x1b[0m \x1b[1m1.51) \x1b[0m\x1b[36m[365d]\x1b[0m \n    The Linux-ck kernel and modules with ck's hrtimer patches\n",
 			},
 		},
 	}
 
 	mockDB := &mock.DBExecutor{
+		ReposFn: func() []string {
+			// Match pacman.conf parsing order for source separation.
+			return []string{"core"}
+		},
 		SyncPackagesFn: func(pkgs ...string) []mock.IPackage {
 			mockDB := mock.NewDB("core")
 			return []mock.IPackage{
 				&mock.Package{
+					PBase:         "linux",
 					PName:         "linux",
 					PVersion:      "5.16.0",
 					PDescription:  "The Linux kernel and modules",
@@ -302,6 +260,7 @@ func TestSourceQueryBuilder(t *testing.T) {
 					PArchitecture: "x86_64",
 				},
 				&mock.Package{
+					PBase:         "linux-zen",
 					PName:         "linux-zen",
 					PVersion:      "5.16.0",
 					PDescription:  "The Linux ZEN kernel and modules",
@@ -361,4 +320,428 @@ func TestSourceQueryBuilder(t *testing.T) {
 			assert.Equal(t, strings.Join(tc.wantOutput, ""), w.String())
 		})
 	}
+}
+
+func TestSourceQueryBuilderTieSortsByRepoOrder(t *testing.T) {
+	t.Parallel()
+
+	type testCase struct {
+		desc      string
+		bottomUp  bool
+		repoOrder []string
+		wantNames []string
+	}
+
+	testCases := []testCase{
+		{
+			desc:      "sort-by-metric topdown repo-order-core-extra",
+			bottomUp:  false,
+			repoOrder: []string{"core", "extra"},
+			wantNames: []string{"systemd", "systemd-libs", "python-systemd", "systemd-git"},
+		},
+		{
+			desc:      "sort-by-metric topdown repo-order-extra-core",
+			bottomUp:  false,
+			repoOrder: []string{"extra", "core"},
+			wantNames: []string{"systemd", "python-systemd", "systemd-libs", "systemd-git"},
+		},
+		{
+			desc:      "sort-by-metric bottomup repo-order-core-extra",
+			bottomUp:  true,
+			repoOrder: []string{"core", "extra"},
+			wantNames: []string{"systemd-git", "python-systemd", "systemd-libs", "systemd"},
+		},
+		{
+			desc:      "sort-by-metric bottomup repo-order-extra-core",
+			bottomUp:  true,
+			repoOrder: []string{"extra", "core"},
+			wantNames: []string{"systemd-git", "systemd-libs", "python-systemd", "systemd"},
+		},
+	}
+
+	mockDB := &mock.DBExecutor{
+		SyncPackagesFn: func(pkgs ...string) []mock.IPackage {
+			return []mock.IPackage{
+				&mock.Package{
+					PBase:         "systemd",
+					PName:         "systemd",
+					PVersion:      "259-1",
+					PDescription:  "system and service manager",
+					PSize:         1,
+					PISize:        1,
+					PDB:           mock.NewDB("core"),
+					PArchitecture: "x86_64",
+				},
+				&mock.Package{
+					PBase:         "systemd",
+					PName:         "systemd-libs",
+					PVersion:      "259-1",
+					PDescription:  "systemd client libraries",
+					PSize:         1,
+					PISize:        1,
+					PDB:           mock.NewDB("core"),
+					PArchitecture: "x86_64",
+				},
+				&mock.Package{
+					PBase:         "python-systemd",
+					PName:         "python-systemd",
+					PVersion:      "235-4",
+					PDescription:  "Python bindings for systemd",
+					PSize:         1,
+					PISize:        1,
+					PDB:           mock.NewDB("extra"),
+					PArchitecture: "x86_64",
+				},
+			}
+		},
+		LocalPackageFn: func(string) mock.IPackage {
+			return nil
+		},
+	}
+
+	mockAUR := &mockaur.MockAUR{
+		GetFn: func(ctx context.Context, query *aur.Query) ([]aur.Pkg, error) {
+			return []aur.Pkg{
+				{
+					Description:    "system and service manager (git version)",
+					FirstSubmitted: 1445633397,
+					ID:             1909597,
+					LastModified:   1765571424,
+					Maintainer:     "Atsutane",
+					Name:           "systemd-git",
+					NumVotes:       11,
+					OutOfDate:      0,
+					PackageBase:    "systemd-git",
+					PackageBaseID:  102323,
+					Popularity:     0.005618,
+					URL:            "https://www.github.com/systemd/systemd",
+					URLPath:        "/cgit/aur.git/snapshot/systemd-git.tar.gz",
+					Version:        "259.rc3.r85286.7524671f74c-1",
+				},
+			}, nil
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.desc, func(t *testing.T) {
+			w := &strings.Builder{}
+			mockDB.ReposFn = func() []string {
+				return tc.repoOrder
+			}
+			queryBuilder := NewSourceQueryBuilder(mockAUR,
+				text.NewLogger(w, io.Discard, strings.NewReader(""), false, "test"),
+				"", parser.ModeAny, "", tc.bottomUp,
+				false, true)
+
+			queryBuilder.Execute(context.Background(), mockDB, []string{"systemd"})
+
+			gotNames := make([]string, len(queryBuilder.results))
+			for i, result := range queryBuilder.results {
+				gotNames[i] = result.name
+			}
+
+			assert.Equal(t, tc.wantNames, gotNames)
+		})
+	}
+}
+
+func TestSourceQueryBuilderTieDoesNotSeparateSources(t *testing.T) {
+	t.Parallel()
+
+	type testCase struct {
+		desc      string
+		bottomUp  bool
+		wantNames []string
+	}
+
+	testCases := []testCase{
+		{
+			desc:      "sort-by-metric topdown",
+			bottomUp:  false,
+			wantNames: []string{"yay", "ruby-yard", "yay-git"},
+		},
+		{
+			desc:      "sort-by-metric bottomup",
+			bottomUp:  true,
+			wantNames: []string{"yay-git", "ruby-yard", "yay"},
+		},
+	}
+
+	mockDB, mockAUR := newYayQueryBuilderMocks()
+
+	for _, tc := range testCases {
+		t.Run(tc.desc, func(t *testing.T) {
+			w := &strings.Builder{}
+			queryBuilder := NewSourceQueryBuilder(mockAUR,
+				text.NewLogger(w, io.Discard, strings.NewReader(""), false, "test"),
+				"", parser.ModeAny, "", tc.bottomUp,
+				false, true)
+
+			queryBuilder.Execute(context.Background(), mockDB, []string{"yay"})
+
+			gotNames := make([]string, len(queryBuilder.results))
+			for i, result := range queryBuilder.results {
+				gotNames[i] = result.name
+			}
+
+			assert.Equal(t, tc.wantNames, gotNames)
+		})
+	}
+}
+
+func TestSourceQueryBuilderSortByFields(t *testing.T) {
+	t.Parallel()
+
+	type testCase struct {
+		desc      string
+		sortBy    string
+		bottomUp  bool
+		wantNames []string
+	}
+
+	testCases := []testCase{
+		{
+			desc:      "sort-by-base topdown",
+			sortBy:    "base",
+			bottomUp:  false,
+			wantNames: []string{"yay-git", "yay", "ruby-yard"},
+		},
+		{
+			desc:      "sort-by-base bottomup",
+			sortBy:    "base",
+			bottomUp:  true,
+			wantNames: []string{"ruby-yard", "yay", "yay-git"},
+		},
+		{
+			desc:      "sort-by-modified topdown",
+			sortBy:    "modified",
+			bottomUp:  false,
+			wantNames: []string{"yay-git", "yay", "ruby-yard"},
+		},
+		{
+			desc:      "sort-by-modified bottomup",
+			sortBy:    "modified",
+			bottomUp:  true,
+			wantNames: []string{"ruby-yard", "yay", "yay-git"},
+		},
+		{
+			desc:      "sort-by-name topdown",
+			sortBy:    "name",
+			bottomUp:  false,
+			wantNames: []string{"yay-git", "yay", "ruby-yard"},
+		},
+		{
+			desc:      "sort-by-name bottomup",
+			sortBy:    "name",
+			bottomUp:  true,
+			wantNames: []string{"ruby-yard", "yay", "yay-git"},
+		},
+		{
+			desc:      "sort-by-popularity topdown",
+			sortBy:    "popularity",
+			bottomUp:  false,
+			wantNames: []string{"yay", "yay-git", "ruby-yard"},
+		},
+		{
+			desc:      "sort-by-popularity bottomup",
+			sortBy:    "popularity",
+			bottomUp:  true,
+			wantNames: []string{"ruby-yard", "yay-git", "yay"},
+		},
+		{
+			desc:      "sort-by-votes topdown",
+			sortBy:    "votes",
+			bottomUp:  false,
+			wantNames: []string{"yay", "yay-git", "ruby-yard"},
+		},
+		{
+			desc:      "sort-by-votes bottomup",
+			sortBy:    "votes",
+			bottomUp:  true,
+			wantNames: []string{"ruby-yard", "yay-git", "yay"},
+		},
+		{
+			desc:      "sort-by-submitted topdown",
+			sortBy:    "submitted",
+			bottomUp:  false,
+			wantNames: []string{"yay-git", "yay", "ruby-yard"},
+		},
+		{
+			desc:      "sort-by-submitted bottomup",
+			sortBy:    "submitted",
+			bottomUp:  true,
+			wantNames: []string{"ruby-yard", "yay", "yay-git"},
+		},
+		{
+			desc:      "sort-by-metric topdown",
+			sortBy:    "",
+			bottomUp:  false,
+			wantNames: []string{"yay", "ruby-yard", "yay-git"},
+		},
+		{
+			desc:      "sort-by-metric bottomup",
+			sortBy:    "",
+			bottomUp:  true,
+			wantNames: []string{"yay-git", "ruby-yard", "yay"},
+		},
+	}
+
+	mockDB, mockAUR := newYayQueryBuilderMocks()
+
+	for _, tc := range testCases {
+		t.Run(tc.desc, func(t *testing.T) {
+			w := &strings.Builder{}
+			queryBuilder := NewSourceQueryBuilder(mockAUR,
+				text.NewLogger(w, io.Discard, strings.NewReader(""), false, "test"),
+				tc.sortBy, parser.ModeAny, "", tc.bottomUp,
+				false, false)
+
+			queryBuilder.Execute(context.Background(), mockDB, []string{"yay"})
+
+			gotNames := make([]string, len(queryBuilder.results))
+			for i, result := range queryBuilder.results {
+				gotNames[i] = result.name
+			}
+
+			assert.Equal(t, tc.wantNames, gotNames)
+		})
+	}
+}
+
+func TestSourceQueryBuilderChromeRanking(t *testing.T) {
+	t.Parallel()
+
+	mockDB := &mock.DBExecutor{
+		ReposFn: func() []string {
+			return []string{"extra"}
+		},
+		SyncPackagesFn: func(pkgs ...string) []mock.IPackage {
+			return nil
+		},
+		LocalPackageFn: func(string) mock.IPackage {
+			return nil
+		},
+	}
+
+	mockAUR := &mockaur.MockAUR{
+		GetFn: func(ctx context.Context, query *aur.Query) ([]aur.Pkg, error) {
+			return []aur.Pkg{
+				{
+					Description: "The popular web browser by Google (Stable Channel)",
+					Name:        "google-chrome",
+					NumVotes:    2351,
+					Popularity:  13.24,
+					PackageBase: "google-chrome",
+					Version:     "149.0.7827.53-1",
+				},
+				{
+					Description: "Extract Android APKs for running in Chrome OS OR Chrome in OS X, Linux and Windows",
+					Name:        "chromeos-apk-git",
+					NumVotes:    37,
+					Popularity:  0.00,
+					PackageBase: "chromeos-apk-git",
+					Version:     "20201218.r129.f13a94d-1",
+				},
+				{
+					Description: "External extension updater for Chromium based browsers",
+					Name:        "chromexup",
+					NumVotes:    5,
+					Popularity:  0.00,
+					PackageBase: "chromexup",
+					Version:     "0.5.4-5",
+				},
+				{
+					Description: "Standalone server that implements the W3C WebDriver standard (for goog",
+					Name:        "chromedriver",
+					NumVotes:    52,
+					Popularity:  0.50,
+					PackageBase: "chromedriver",
+					Version:     "149.0.7827.54-1",
+				},
+			}, nil
+		},
+	}
+
+	w := &strings.Builder{}
+	queryBuilder := NewSourceQueryBuilder(mockAUR,
+		text.NewLogger(w, io.Discard, strings.NewReader(""), false, "test"),
+		"", parser.ModeAny, "", false,
+		false, false)
+
+	queryBuilder.Execute(context.Background(), mockDB, []string{"chrome"})
+
+	gotNames := make([]string, len(queryBuilder.results))
+	for i, result := range queryBuilder.results {
+		gotNames[i] = result.name
+	}
+
+	assert.Equal(t, []string{"google-chrome", "chromedriver", "chromeos-apk-git", "chromexup"}, gotNames)
+}
+
+func newYayQueryBuilderMocks() (*mock.DBExecutor, *mockaur.MockAUR) {
+	mockDB := &mock.DBExecutor{
+		ReposFn: func() []string {
+			// Match pacman.conf parsing order for source separation.
+			return []string{"core", "extra"}
+		},
+		SyncPackagesFn: func(pkgs ...string) []mock.IPackage {
+			mockDB := mock.NewDB("extra")
+			return []mock.IPackage{
+				&mock.Package{
+					PBase:         "ruby-yard",
+					PName:         "ruby-yard",
+					PVersion:      "0.9.34-5",
+					PDescription:  "YARD is a Ruby Documentation tool. The Y stands for \"Yay!\"",
+					PSize:         1,
+					PISize:        1,
+					PDB:           mockDB,
+					PArchitecture: "x86_64",
+				},
+			}
+		},
+		LocalPackageFn: func(string) mock.IPackage {
+			return nil
+		},
+	}
+
+	mockAUR := &mockaur.MockAUR{
+		GetFn: func(ctx context.Context, query *aur.Query) ([]aur.Pkg, error) {
+			return []aur.Pkg{
+				{
+					Description:    "Yet another yogurt. Pacman wrapper and AUR helper written in go.",
+					FirstSubmitted: 1475688004,
+					ID:             1911141,
+					LastModified:   1765742501,
+					Maintainer:     "jguer",
+					Name:           "yay",
+					NumVotes:       2461,
+					OutOfDate:      0,
+					PackageBase:    "yay",
+					PackageBaseID:  115973,
+					Popularity:     34.903162,
+					URL:            "https://github.com/Jguer/yay",
+					URLPath:        "/cgit/aur.git/snapshot/yay.tar.gz",
+					Version:        "12.5.7-1",
+				},
+				{
+					Description:    "Yet another yogurt. Pacman wrapper and AUR helper written in go. (development version)",
+					FirstSubmitted: 1517205142,
+					ID:             1911143,
+					LastModified:   1765742519,
+					Maintainer:     "jguer",
+					Name:           "yay-git",
+					NumVotes:       55,
+					OutOfDate:      0,
+					PackageBase:    "yay-git",
+					PackageBaseID:  129573,
+					Popularity:     1.850171,
+					URL:            "https://github.com/Jguer/yay",
+					URLPath:        "/cgit/aur.git/snapshot/yay-git.tar.gz",
+					Version:        "12.5.7.r0.g44dfda05-1",
+				},
+			}, nil
+		},
+	}
+
+	return mockDB, mockAUR
 }

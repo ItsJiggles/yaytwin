@@ -8,14 +8,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Jguer/aur"
-	alpm "github.com/Jguer/go-alpm/v2"
+	alpm "github.com/Jguer/dyalpm"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -84,8 +87,8 @@ func TestSyncUpgrade(t *testing.T) {
 		ReposFn: func() []string {
 			return []string{"core"}
 		},
-		InstalledRemotePackagesFn: func() map[string]alpm.IPackage {
-			return map[string]alpm.IPackage{}
+		InstalledRemotePackagesFn: func() map[string]alpm.Package {
+			return map[string]alpm.Package{}
 		},
 		InstalledRemotePackageNamesFn: func() []string {
 			return []string{}
@@ -132,14 +135,20 @@ func TestSyncUpgrade(t *testing.T) {
 	require.Len(t, mockRunner.ShowCalls, len(wantShow))
 	require.Len(t, mockRunner.CaptureCalls, len(wantCapture))
 
+	remainingWantShow := wantShow
 	for i, call := range mockRunner.ShowCalls {
+		if len(remainingWantShow) == 0 {
+			t.Fatalf("unexpected number of show commands: got %d, want %d", i+1, len(wantShow))
+		}
+		wantShowValue := remainingWantShow[0]
+		remainingWantShow = remainingWantShow[1:]
 		show := call.Args[0].(*exec.Cmd).String()
 		show = strings.ReplaceAll(show, makepkgBin, "makepkg")
 		show = strings.ReplaceAll(show, pacmanBin, "pacman")
-		show = strings.ReplaceAll(show, gitBin, "pacman")
+		show = strings.ReplaceAll(show, gitBin, "git")
 
 		// options are in a different order on different systems and on CI root user is used
-		assert.Subset(t, strings.Split(show, " "), strings.Split(wantShow[i], " "), fmt.Sprintf("%d - %s", i, show))
+		assert.Subset(t, strings.Split(show, " "), strings.Split(wantShowValue, " "), fmt.Sprintf("%d - %s", i, show))
 	}
 }
 
@@ -196,8 +205,8 @@ func TestSyncUpgrade_IgnoreAll(t *testing.T) {
 		ReposFn: func() []string {
 			return []string{"core"}
 		},
-		InstalledRemotePackagesFn: func() map[string]alpm.IPackage {
-			return map[string]alpm.IPackage{}
+		InstalledRemotePackagesFn: func() map[string]alpm.Package {
+			return map[string]alpm.Package{}
 		},
 		InstalledRemotePackageNamesFn: func() []string {
 			return []string{}
@@ -243,14 +252,155 @@ func TestSyncUpgrade_IgnoreAll(t *testing.T) {
 	require.Len(t, mockRunner.ShowCalls, len(wantShow))
 	require.Len(t, mockRunner.CaptureCalls, len(wantCapture))
 
+	remainingWantShow := wantShow
 	for i, call := range mockRunner.ShowCalls {
+		if len(remainingWantShow) == 0 {
+			t.Fatalf("unexpected number of show commands: got %d, want %d", i+1, len(wantShow))
+		}
+		wantShowValue := remainingWantShow[0]
+		remainingWantShow = remainingWantShow[1:]
 		show := call.Args[0].(*exec.Cmd).String()
 		show = strings.ReplaceAll(show, makepkgBin, "makepkg")
 		show = strings.ReplaceAll(show, pacmanBin, "pacman")
-		show = strings.ReplaceAll(show, gitBin, "pacman")
+		show = strings.ReplaceAll(show, gitBin, "git")
 
 		// options are in a different order on different systems and on CI root user is used
-		assert.Subset(t, strings.Split(show, " "), strings.Split(wantShow[i], " "), fmt.Sprintf("%d - %s", i, show))
+		assert.Subset(t, strings.Split(show, " "), strings.Split(wantShowValue, " "), fmt.Sprintf("%d - %s", i, show))
+	}
+}
+
+func TestSyncUpgrade_WaitsForCompletionCache(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	makepkgBin := tmpDir + "/makepkg"
+	pacmanBin := tmpDir + "/pacman"
+	gitBin := tmpDir + "/git"
+
+	for _, path := range []string{makepkgBin, pacmanBin, gitBin} {
+		f, err := os.OpenFile(path, os.O_RDONLY|os.O_CREATE, 0o755)
+		require.NoError(t, err)
+		require.NoError(t, f.Close())
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/packages.gz", r.URL.Path)
+		_, err := io.WriteString(w, "# Comment\nrepo-pkg\n")
+		require.NoError(t, err)
+	}))
+	defer server.Close()
+
+	cmdArgs := parser.MakeArguments()
+	cmdArgs.AddArg("S")
+	cmdArgs.AddArg("y")
+	cmdArgs.AddArg("u")
+
+	showOverride := func(cmd *exec.Cmd) error {
+		return nil
+	}
+
+	mockRunner := &exe.MockRunner{CaptureFn: func(cmd *exec.Cmd) (string, string, error) {
+		return "", "", nil
+	}, ShowFn: showOverride}
+	cmdBuilder := &exe.CmdBuilder{
+		MakepkgBin:       makepkgBin,
+		SudoBin:          "su",
+		PacmanBin:        pacmanBin,
+		PacmanConfigPath: "/etc/pacman.conf",
+		GitBin:           gitBin,
+		Runner:           mockRunner,
+		SudoLoopEnabled:  false,
+	}
+
+	dbName := mock.NewDB("core")
+	syncPackagesEntered := make(chan struct{})
+	releaseSyncPackages := make(chan struct{})
+	var started sync.Once
+
+	db := &mock.DBExecutor{
+		AlpmArchitecturesFn: func() ([]string, error) {
+			return []string{"x86_64"}, nil
+		},
+		RefreshHandleFn: func() error {
+			return nil
+		},
+		ReposFn: func() []string {
+			return []string{"core"}
+		},
+		InstalledRemotePackagesFn: func() map[string]alpm.Package {
+			return map[string]alpm.Package{}
+		},
+		InstalledRemotePackageNamesFn: func() []string {
+			return []string{}
+		},
+		SyncPackagesFn: func(...string) []mock.IPackage {
+			started.Do(func() {
+				close(syncPackagesEntered)
+			})
+
+			<-releaseSyncPackages
+
+			return []mock.IPackage{
+				&mock.Package{PName: "repo-pkg", PDB: dbName},
+			}
+		},
+		SyncUpgradesFn: func(bool) (map[string]db.SyncUpgrade, error) {
+			return map[string]db.SyncUpgrade{
+				"linux": {
+					Package: &mock.Package{
+						PName:    "linux",
+						PVersion: "5.10.0",
+						PDB:      dbName,
+					},
+					LocalVersion: "4.3.0",
+					Reason:       alpm.PkgReasonExplicit,
+				},
+			}, nil
+		},
+	}
+
+	run := &runtime.Runtime{
+		Cfg: &settings.Configuration{
+			AURURL:             server.URL,
+			CompletionInterval: 7,
+			CompletionPath:     tmpDir + "/completion",
+			RemoveMake:         "no",
+		},
+		Logger:     text.NewLogger(io.Discard, os.Stderr, strings.NewReader("\n"), true, "test"),
+		CmdBuilder: cmdBuilder,
+		HTTPClient: server.Client(),
+		VCSStore:   &vcs.Mock{},
+		AURClient: &mockaur.MockAUR{
+			GetFn: func(ctx context.Context, query *aur.Query) ([]aur.Pkg, error) {
+				return []aur.Pkg{}, nil
+			},
+		},
+	}
+
+	runFinished := make(chan error, 1)
+	go func() {
+		runFinished <- handleCmd(context.Background(), run, cmdArgs, db)
+	}()
+
+	select {
+	case <-syncPackagesEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("completion cache refresh did not reach SyncPackages")
+	}
+
+	select {
+	case err := <-runFinished:
+		t.Fatalf("handleCmd returned before completion cache finished: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(releaseSyncPackages)
+
+	select {
+	case err := <-runFinished:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("handleCmd did not return after completion cache finished")
 	}
 }
 
@@ -307,8 +457,8 @@ func TestSyncUpgrade_IgnoreOne(t *testing.T) {
 		ReposFn: func() []string {
 			return []string{"core"}
 		},
-		InstalledRemotePackagesFn: func() map[string]alpm.IPackage {
-			return map[string]alpm.IPackage{}
+		InstalledRemotePackagesFn: func() map[string]alpm.Package {
+			return map[string]alpm.Package{}
 		},
 		InstalledRemotePackageNamesFn: func() []string {
 			return []string{}
@@ -375,10 +525,11 @@ func TestSyncUpgrade_IgnoreOne(t *testing.T) {
 	require.Len(t, mockRunner.CaptureCalls, len(wantCapture))
 
 	for i, call := range mockRunner.ShowCalls {
+		require.Less(t, i, len(wantShow), "unexpected number of show commands")
 		show := call.Args[0].(*exec.Cmd).String()
 		show = strings.ReplaceAll(show, makepkgBin, "makepkg")
 		show = strings.ReplaceAll(show, pacmanBin, "pacman")
-		show = strings.ReplaceAll(show, gitBin, "pacman")
+		show = strings.ReplaceAll(show, gitBin, "git")
 
 		// options are in a different order on different systems and on CI root user is used
 		assert.Subset(t, strings.Split(show, " "), strings.Split(wantShow[i], " "), fmt.Sprintf("%d - %s", i, show))
@@ -481,8 +632,8 @@ pkgname = python-vosk
 		SyncSatisfierFn: func(s string) mock.IPackage {
 			return nil
 		},
-		InstalledRemotePackagesFn: func() map[string]alpm.IPackage {
-			return map[string]alpm.IPackage{
+		InstalledRemotePackagesFn: func() map[string]alpm.Package {
+			return map[string]alpm.Package{
 				"vosk-api": &mock.Package{
 					PName:    "vosk-api",
 					PVersion: "0.3.43-1",
@@ -567,11 +718,12 @@ pkgname = python-vosk
 		fmt.Sprintf("%#v", sanitizeCalls(mockRunner.CaptureCalls, tmpDir, makepkgBin, pacmanBin, gitBin)))
 
 	for i, call := range mockRunner.ShowCalls {
+		require.Less(t, i, len(wantShow), "unexpected number of show commands")
 		show := call.Args[0].(*exec.Cmd).String()
 		show = strings.ReplaceAll(show, tmpDir, "/testdir") // replace the temp dir with a static path
 		show = strings.ReplaceAll(show, makepkgBin, "makepkg")
 		show = strings.ReplaceAll(show, pacmanBin, "pacman")
-		show = strings.ReplaceAll(show, gitBin, "pacman")
+		show = strings.ReplaceAll(show, gitBin, "git")
 
 		// options are in a different order on different systems and on CI root user is used
 		assert.Subset(t, strings.Split(show, " "), strings.Split(wantShow[i], " "), fmt.Sprintf("%d - %s", i, show))
@@ -681,8 +833,8 @@ func TestSyncUpgrade_NoCombinedUpgrade(t *testing.T) {
 				ReposFn: func() []string {
 					return []string{"core"}
 				},
-				InstalledRemotePackagesFn: func() map[string]alpm.IPackage {
-					return map[string]alpm.IPackage{}
+				InstalledRemotePackagesFn: func() map[string]alpm.Package {
+					return map[string]alpm.Package{}
 				},
 				InstalledRemotePackageNamesFn: func() []string {
 					return []string{}
@@ -716,6 +868,7 @@ func TestSyncUpgrade_NoCombinedUpgrade(t *testing.T) {
 			require.Len(t, mockRunner.CaptureCalls, 0)
 
 			for i, call := range mockRunner.ShowCalls {
+				require.Less(t, i, len(tc.want), "unexpected number of show commands")
 				show := call.Args[0].(*exec.Cmd).String()
 				show = strings.ReplaceAll(show, pacmanBin, "pacman")
 

@@ -5,7 +5,7 @@ import (
 	"strconv"
 
 	"github.com/Jguer/aur"
-	"github.com/Jguer/go-alpm/v2"
+	alpm "github.com/Jguer/dyalpm"
 	"github.com/leonelquinteros/gotext"
 
 	"github.com/Jguer/yay/v12/pkg/db"
@@ -58,6 +58,10 @@ func aurPkgSearchString(
 		text.Bold(" (+"+strconv.Itoa(pkg.NumVotes)) +
 		" " + text.Bold(strconv.FormatFloat(pkg.Popularity, 'f', 2, 64)+") ")
 
+	if ageTag := text.FormatAgeTag(int64(pkg.LastModified)); ageTag != "" {
+		toPrint += ageTag + " "
+	}
+
 	if pkg.Maintainer == "" {
 		toPrint += text.Bold(text.Red(gotext.Get("(Orphaned)"))) + " "
 	}
@@ -86,7 +90,7 @@ func aurPkgSearchString(
 }
 
 // PrintSearch receives a RepoSearch type and outputs pretty text.
-func syncPkgSearchString(pkg alpm.IPackage, dbExecutor db.Executor, singleLineResults bool) string {
+func syncPkgSearchString(pkg alpm.Package, dbExecutor db.Executor, singleLineResults bool) string {
 	linkText := text.Bold(text.ColorHash(pkg.DB().Name())) + "/" + text.Bold(pkg.Name())
 	toPrint := text.CreateRepoLink(pkg.DB().Name(), pkg.Architecture(), pkg.Name(), linkText) +
 		" " + text.Cyan(pkg.Version()) +

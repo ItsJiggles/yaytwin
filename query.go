@@ -7,8 +7,9 @@ import (
 	"path/filepath"
 
 	aur "github.com/Jguer/aur"
-	alpm "github.com/Jguer/go-alpm/v2"
+	alpm "github.com/Jguer/dyalpm"
 	mapset "github.com/deckarep/golang-set/v2"
+	"github.com/leonelquinteros/gotext"
 
 	"github.com/Jguer/yay/v12/pkg/db"
 	"github.com/Jguer/yay/v12/pkg/query"
@@ -37,9 +38,9 @@ func syncInfo(ctx context.Context, run *runtime.Runtime,
 	cmdArgs *parser.Arguments, pkgS []string, dbExecutor db.Executor,
 ) error {
 	var (
-		info    []aur.Pkg
-		err     error
-		missing = false
+		remoteAurPkgs []aur.Pkg
+		err           error
+		missing       = false
 	)
 
 	pkgS = query.RemoveInvalidTargets(run.Logger, pkgS, run.Cfg.Mode)
@@ -77,14 +78,25 @@ func syncInfo(ctx context.Context, run *runtime.Runtime,
 			noDB = append(noDB, name)
 		}
 
-		info, err = run.AURClient.Get(ctx, &aur.Query{
+		remoteAurPkgs, err = run.AURClient.Get(ctx, &aur.Query{
 			Needles: noDB,
 			By:      aur.Name,
 		})
 		if err != nil {
-			missing = true
-
 			run.Logger.Errorln(err)
+		}
+
+		// Check for any missing packages and print errors for any not found
+		found := mapset.NewThreadUnsafeSet[string]()
+		for i := range remoteAurPkgs {
+			found.Add(remoteAurPkgs[i].Name)
+		}
+
+		for _, name := range noDB {
+			if !found.Contains(name) {
+				missing = true
+				run.Logger.Errorln(gotext.Get("No AUR package found for"), " ", name)
+			}
 		}
 	}
 
@@ -100,12 +112,8 @@ func syncInfo(ctx context.Context, run *runtime.Runtime,
 		}
 	}
 
-	if len(aurS) != len(info) {
-		missing = true
-	}
-
-	for i := range info {
-		printInfo(run.Logger, run.Cfg, &info[i], cmdArgs.ExistsDouble("i"))
+	for i := range remoteAurPkgs {
+		printInfo(run.Logger, run.Cfg, &remoteAurPkgs[i], cmdArgs.ExistsDouble("i"))
 	}
 
 	if missing {
@@ -234,7 +242,13 @@ func hangingPackages(removeOptional bool, dbExecutor db.Executor) (hanging []str
 
 func getFolderSize(path string) (size int64) {
 	_ = filepath.WalkDir(path, func(p string, entry fs.DirEntry, err error) error {
-		info, _ := entry.Info()
+		if err != nil || entry == nil {
+			return nil
+		}
+		info, infoErr := entry.Info()
+		if infoErr != nil || info == nil {
+			return nil
+		}
 		size += info.Size()
 		return nil
 	})

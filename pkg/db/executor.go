@@ -3,13 +3,13 @@ package db
 import (
 	"time"
 
-	alpm "github.com/Jguer/go-alpm/v2"
+	alpm "github.com/Jguer/dyalpm"
 
 	"github.com/Jguer/yay/v12/pkg/text"
 )
 
 type (
-	IPackage = alpm.IPackage
+	IPackage = alpm.Package
 	Depend   = alpm.Depend
 )
 
@@ -27,10 +27,11 @@ type Upgrade struct {
 	RemoteVersion string
 	Reason        alpm.PkgReason
 	Extra         string // Extra information to be displayed
+	LastModified  int64  // Unix timestamp of last AUR modification, 0 for non-AUR packages
 }
 
 type SyncUpgrade struct {
-	Package      alpm.IPackage
+	Package      alpm.Package
 	LocalVersion string
 	Reason       alpm.PkgReason
 }

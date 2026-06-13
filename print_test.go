@@ -10,9 +10,10 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Jguer/aur"
-	alpm "github.com/Jguer/go-alpm/v2"
+	alpm "github.com/Jguer/dyalpm"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,6 +33,11 @@ func TestPrintUpdateList(t *testing.T) {
 	// The current method of capturing os.Stdout hinders parallelization.
 	// Setting of global settings.NoConfirm in printUpdateList also hinders parallelization.
 	// t.Parallel()
+	// Cannot run in parallel: mutates text.NowFunc and settings.NoConfirm, both package-level vars.
+	// Pin time so FormatAgeTag output is deterministic across test runs.
+	const testPkgLastModified int64 = 1646250901
+	text.NowFunc = func() time.Time { return time.Unix(testPkgLastModified+365*24*3600, 0) }
+	t.Cleanup(func() { text.NowFunc = time.Now })
 	pacmanBin := t.TempDir() + "/pacman"
 	f, err := os.OpenFile(pacmanBin, os.O_RDONLY|os.O_CREATE, 0o755)
 	require.NoError(t, err)
@@ -48,8 +54,8 @@ func TestPrintUpdateList(t *testing.T) {
 		ReposFn: func() []string {
 			return []string{"core"}
 		},
-		InstalledRemotePackagesFn: func() map[string]alpm.IPackage {
-			return map[string]alpm.IPackage{
+		InstalledRemotePackagesFn: func() map[string]alpm.Package {
+			return map[string]alpm.Package{
 				"vosk-api": &mock.Package{
 					PName:    "vosk-api",
 					PVersion: "0.3.43-1",
@@ -108,8 +114,8 @@ func TestPrintUpdateList(t *testing.T) {
 		ReposFn: func() []string {
 			return []string{"core"}
 		},
-		InstalledRemotePackagesFn: func() map[string]alpm.IPackage {
-			return map[string]alpm.IPackage{
+		InstalledRemotePackagesFn: func() map[string]alpm.Package {
+			return map[string]alpm.Package{
 				"vosk-api": &mock.Package{
 					PName:    "vosk-api",
 					PVersion: "0.3.43-1",
@@ -151,6 +157,19 @@ func TestPrintUpdateList(t *testing.T) {
 					Name:        "vosk-api",
 					PackageBase: "vosk-api",
 					Version:     "0.3.43-1",
+				},
+			}, nil
+		},
+	}
+
+	mockAURWithAge := &mockaur.MockAUR{
+		GetFn: func(ctx context.Context, query *aur.Query) ([]aur.Pkg, error) {
+			return []aur.Pkg{
+				{
+					Name:         "vosk-api",
+					PackageBase:  "vosk-api",
+					Version:      "0.3.45-1",
+					LastModified: int(testPkgLastModified),
 				},
 			}, nil
 		},
@@ -259,6 +278,30 @@ func TestPrintUpdateList(t *testing.T) {
 			targets:  []string{},
 			wantPkgs: []string{},
 			wantErr:  true,
+		},
+		{
+			name:     "Qu with age tag",
+			mockData: mockData{mockDB, mockAURWithAge},
+			args:     []string{"Q", "u"},
+			targets:  []string{},
+			wantPkgs: []string{
+				fmt.Sprintf("%s %s -> %s",
+					text.Bold("linux"),
+					text.Bold(text.Green("4.3.0")),
+					text.Bold(text.Green("5.10.0")),
+				),
+				fmt.Sprintf("%s %s -> %s",
+					text.Bold("go"),
+					text.Bold(text.Green("2:1.20.3-1")),
+					text.Bold(text.Green("2:1.20.4-1")),
+				),
+				fmt.Sprintf("%s %s -> %s %s",
+					text.Bold("vosk-api"),
+					text.Bold(text.Green("0.3.43-1")),
+					text.Bold(text.Green("0.3.45-1")),
+					text.Cyan("[365d]"),
+				),
+			},
 		},
 	}
 

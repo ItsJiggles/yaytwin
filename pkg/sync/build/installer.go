@@ -22,16 +22,17 @@ import (
 type (
 	PostInstallHookFunc func(ctx context.Context) error
 	Installer           struct {
-		dbExecutor       db.Executor
-		postInstallHooks []PostInstallHookFunc
-		failedAndIgnored map[string]error
-		exeCmd           exe.ICmdBuilder
-		vcsStore         vcs.Store
-		targetMode       parser.TargetMode
-		rebuildMode      parser.RebuildMode
-		origTargets      mapset.Set[string]
-		downloadOnly     bool
-		log              *text.Logger
+		dbExecutor           db.Executor
+		postInstallHooks     []PostInstallHookFunc
+		failedAndIgnored     map[string]error
+		exeCmd               exe.ICmdBuilder
+		vcsStore             vcs.Store
+		targetMode           parser.TargetMode
+		rebuildMode          parser.RebuildMode
+		origTargets          mapset.Set[string]
+		downloadOnly         bool
+		installBuiltPackages bool
+		log                  *text.Logger
 
 		manualConfirmRequired bool
 	}
@@ -50,9 +51,14 @@ func NewInstaller(dbExecutor db.Executor,
 		targetMode:            targetMode,
 		rebuildMode:           rebuildMode,
 		downloadOnly:          downloadOnly,
+		installBuiltPackages:  true,
 		log:                   logger,
 		manualConfirmRequired: true,
 	}
+}
+
+func (installer *Installer) SetInstallBuiltPackages(install bool) {
+	installer.installBuiltPackages = install
 }
 
 func (installer *Installer) CompileFailedAndIgnored() (map[string]error, error) {
@@ -167,7 +173,12 @@ func (installer *Installer) handleLayer(ctx context.Context,
 					aurExp.Add(name)
 				}
 			case dep.Dep, dep.MakeDep, dep.CheckDep:
-				aurDeps.Add(name)
+				// Only apply --asexplicit to packages that are explicitly targeted
+				if cmdArgs.ExistsArg("asexplicit", "asexp") && installer.origTargets.Contains(name) {
+					aurExp.Add(name)
+				} else {
+					aurDeps.Add(name)
+				}
 			}
 		case dep.Sync:
 			if info.Upgrade {
@@ -189,7 +200,12 @@ func (installer *Installer) handleLayer(ctx context.Context,
 					syncExp.Add(compositePkgName)
 				}
 			case dep.Dep, dep.MakeDep, dep.CheckDep:
-				syncDeps.Add(compositePkgName)
+				// Only apply --asexplicit to packages that are explicitly targeted
+				if cmdArgs.ExistsArg("asexplicit", "asexp") && installer.origTargets.Contains(name) {
+					syncExp.Add(compositePkgName)
+				} else {
+					syncDeps.Add(compositePkgName)
+				}
 			}
 		}
 	}
@@ -273,6 +289,10 @@ func (installer *Installer) installAURPackages(ctx context.Context,
 		if hasDebug {
 			deps = append(deps, name+"-debug")
 		}
+	}
+
+	if len(pkgArchives) == 0 || !installer.installBuiltPackages {
+		return nil
 	}
 
 	if err := installPkgArchive(ctx, installer.exeCmd, installer.targetMode,

@@ -1,23 +1,35 @@
-# Use the jguer/yay-builder image as a parent image with archlinux
-FROM docker.io/jguer/yay-builder
+FROM --platform=linux/amd64 archlinux@sha256:c84ad63503efc5d386e30a5f44945fa8eee10fcb21b3d5fceda260783de394ff
+LABEL maintainer="Jguer,docker@jguer.space"
 
-# Install extra packages (pacman-contrib and fish)
-RUN sudo pacman -Syu --noconfirm pacman-contrib fish git-delta openssh bat go github-cli
+ENV GO111MODULE=on
+WORKDIR /app
 
-# Set passwordless sudo for the docker user
-RUN echo "docker ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/docker
+COPY go.mod .
 
-# Create a non-root user and switch to it
+# Disable pacman's landlock/seccomp sandbox: it doesn't work inside BuildKit.
+# asciidoc, doxygen, meson needed for pacman-git.
+RUN set -eux; \
+    sed -i 's/^#\?DisableSandbox.*/DisableSandbox/' /etc/pacman.conf || true; \
+    sed -i 's/^#\?DownloadUser.*/#DownloadUser = alpm/' /etc/pacman.conf || true; \
+    pacman -Syu --noconfirm --needed \
+        pacman-contrib zsh git-delta openssh bat go github-cli \
+        archlinux-keyring git gcc make sudo asciidoc doxygen meson curl; \
+    curl -sSfL https://golangci-lint.run/install.sh | sh -s v2.12.2; \
+    go mod download; \
+    rm -rf /var/lib/pacman/sync/* /var/cache/pacman/* /tmp/* /var/tmp/*; \
+    rm -rf /usr/share/man/* /usr/share/doc/* || true
+
+# Non-root user with passwordless sudo
+RUN useradd -m -s /bin/bash docker \
+    && echo "docker ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/docker
+
 USER docker
 
 # Install xgotext
 RUN go install github.com/leonelquinteros/gotext/cli/xgotext@latest
 
-# Add /app/bin to the PATH
-ENV PATH="/app/bin:/home/docker/go/bin:PATH"
+ENV PATH="/app/bin:/home/docker/go/bin:$PATH"
 
-# Set the working directory
 WORKDIR /workspace
 
-# Command to run when starting the container
-CMD ["bash"]
+CMD ["zsh"]

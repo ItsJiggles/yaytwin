@@ -9,12 +9,11 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	aur "github.com/Jguer/aur"
 	"github.com/stretchr/testify/assert"
 
-	alpm "github.com/Jguer/go-alpm/v2"
+	alpm "github.com/Jguer/dyalpm"
 
 	"github.com/Jguer/yay/v12/pkg/db/mock"
 	"github.com/Jguer/yay/v12/pkg/text"
@@ -25,9 +24,8 @@ func Test_upAUR(t *testing.T) {
 	t.Parallel()
 
 	type args struct {
-		remote          map[string]alpm.IPackage
+		remote          map[string]alpm.Package
 		aurdata         map[string]*aur.Pkg
-		timeUpdate      bool
 		enableDowngrade bool
 	}
 	tests := []struct {
@@ -38,7 +36,7 @@ func Test_upAUR(t *testing.T) {
 		{
 			name: "No Updates",
 			args: args{
-				remote: map[string]alpm.IPackage{
+				remote: map[string]alpm.Package{
 					"hello":     &mock.Package{PName: "hello", PVersion: "2.0.0"},
 					"local_pkg": &mock.Package{PName: "local_pkg", PVersion: "1.1.0"},
 					"ignored":   &mock.Package{PName: "ignored", PVersion: "1.0.0", PShouldIgnore: true},
@@ -47,29 +45,26 @@ func Test_upAUR(t *testing.T) {
 					"hello":   {Version: "2.0.0", Name: "hello"},
 					"ignored": {Version: "2.0.0", Name: "ignored"},
 				},
-				timeUpdate: false,
 			},
 			want: UpSlice{Repos: []string{"aur"}, Up: []Upgrade{}},
 		},
 		{
 			name: "Simple Update",
 			args: args{
-				remote: map[string]alpm.IPackage{
+				remote: map[string]alpm.Package{
 					"hello": &mock.Package{PName: "hello", PVersion: "2.0.0"},
 				},
-				aurdata:    map[string]*aur.Pkg{"hello": {Version: "2.1.0", Name: "hello"}},
-				timeUpdate: false,
+				aurdata: map[string]*aur.Pkg{"hello": {Version: "2.1.0", Name: "hello"}},
 			},
 			want: UpSlice{Repos: []string{"aur"}, Up: []Upgrade{{Name: "hello", Repository: "aur", LocalVersion: "2.0.0", RemoteVersion: "2.1.0"}}},
 		},
 		{
 			name: "Downgrade",
 			args: args{
-				remote: map[string]alpm.IPackage{
+				remote: map[string]alpm.Package{
 					"hello": &mock.Package{PName: "hello", PVersion: "2.0.0"},
 				},
 				aurdata:         map[string]*aur.Pkg{"hello": {Version: "1.0.0", Name: "hello"}},
-				timeUpdate:      false,
 				enableDowngrade: true,
 			},
 			want: UpSlice{Repos: []string{"aur"}, Up: []Upgrade{{Name: "hello", Repository: "aur", LocalVersion: "2.0.0", RemoteVersion: "1.0.0"}}},
@@ -77,11 +72,10 @@ func Test_upAUR(t *testing.T) {
 		{
 			name: "Downgrade Disabled",
 			args: args{
-				remote: map[string]alpm.IPackage{
+				remote: map[string]alpm.Package{
 					"hello": &mock.Package{PName: "hello", PVersion: "2.0.0"},
 				},
 				aurdata:         map[string]*aur.Pkg{"hello": {Version: "1.0.0", Name: "hello"}},
-				timeUpdate:      false,
 				enableDowngrade: false,
 			},
 			want: UpSlice{Repos: []string{"aur"}, Up: []Upgrade{}},
@@ -90,7 +84,7 @@ func Test_upAUR(t *testing.T) {
 			name: "Mixed Updates Downgrades",
 			args: args{
 				enableDowngrade: true,
-				remote: map[string]alpm.IPackage{
+				remote: map[string]alpm.Package{
 					"up":      &mock.Package{PName: "up", PVersion: "2.0.0"},
 					"same":    &mock.Package{PName: "same", PVersion: "3.0.0"},
 					"down":    &mock.Package{PName: "down", PVersion: "1.1.0"},
@@ -102,7 +96,6 @@ func Test_upAUR(t *testing.T) {
 					"down":    {Version: "1.0.0", Name: "down"},
 					"ignored": {Version: "2.0.0", Name: "ignored"},
 				},
-				timeUpdate: false,
 			},
 			want: UpSlice{Repos: []string{"aur"}, Up: []Upgrade{
 				{Name: "up", Repository: "aur", LocalVersion: "2.0.0", RemoteVersion: "2.1.0"},
@@ -110,15 +103,14 @@ func Test_upAUR(t *testing.T) {
 			}},
 		},
 		{
-			name: "Time Update",
+			name: "Ignore LastModified When Version Is Unchanged",
 			args: args{
-				remote: map[string]alpm.IPackage{
-					"hello": &mock.Package{PName: "hello", PVersion: "2.0.0", PBuildDate: time.Now()},
+				remote: map[string]alpm.Package{
+					"hello": &mock.Package{PName: "hello", PVersion: "2.0.0"},
 				},
-				aurdata:    map[string]*aur.Pkg{"hello": {Version: "2.0.0", Name: "hello", LastModified: int(time.Now().AddDate(0, 0, 2).Unix())}},
-				timeUpdate: true,
+				aurdata: map[string]*aur.Pkg{"hello": {Version: "2.0.0", Name: "hello", LastModified: 9999999999}},
 			},
-			want: UpSlice{Repos: []string{"aur"}, Up: []Upgrade{{Name: "hello", Repository: "aur", LocalVersion: "2.0.0", RemoteVersion: "2.0.0"}}},
+			want: UpSlice{Repos: []string{"aur"}, Up: []Upgrade{}},
 		},
 	}
 	for _, tt := range tests {
@@ -126,7 +118,7 @@ func Test_upAUR(t *testing.T) {
 			t.Parallel()
 
 			got := UpAUR(text.NewLogger(io.Discard, os.Stderr, strings.NewReader(""), false, "test"),
-				tt.args.remote, tt.args.aurdata, tt.args.timeUpdate, tt.args.enableDowngrade)
+				tt.args.remote, tt.args.aurdata, tt.args.enableDowngrade)
 			assert.ElementsMatch(t, tt.want.Repos, got.Repos)
 			assert.ElementsMatch(t, tt.want.Up, got.Up)
 			assert.Equal(t, tt.want.Len(), got.Len())
@@ -138,7 +130,7 @@ func Test_upDevel(t *testing.T) {
 	t.Parallel()
 
 	type args struct {
-		remote  map[string]alpm.IPackage
+		remote  map[string]alpm.Package
 		aurdata map[string]*aur.Pkg
 		cached  vcs.Store
 	}
@@ -152,7 +144,7 @@ func Test_upDevel(t *testing.T) {
 			name: "No Updates",
 			args: args{
 				cached: &vcs.Mock{},
-				remote: map[string]alpm.IPackage{
+				remote: map[string]alpm.Package{
 					"hello":     &mock.Package{PName: "hello", PVersion: "2.0.0"},
 					"local_pkg": &mock.Package{PName: "local_pkg", PVersion: "1.1.0"},
 					"ignored":   &mock.Package{PName: "ignored", PVersion: "1.0.0", PShouldIgnore: true},
@@ -171,15 +163,15 @@ func Test_upDevel(t *testing.T) {
 				cached: &vcs.Mock{
 					ToUpgradeReturn: []string{"hello", "hello4"},
 				},
-				remote: map[string]alpm.IPackage{
+				remote: map[string]alpm.Package{
 					"hello":  &mock.Package{PName: "hello", PVersion: "2.0.0"},
 					"hello2": &mock.Package{PName: "hello2", PVersion: "3.0.0"},
 					"hello4": &mock.Package{PName: "hello4", PVersion: "4.0.0"},
 				},
 				aurdata: map[string]*aur.Pkg{
-					"hello":  {Version: "2.0.0", Name: "hello"},
+					"hello":  {Version: "2.0.0", Name: "hello", LastModified: 1700000000},
 					"hello2": {Version: "2.0.0", Name: "hello2"},
-					"hello4": {Version: "2.0.0", Name: "hello4"},
+					"hello4": {Version: "2.0.0", Name: "hello4", LastModified: 1700000004},
 				},
 			},
 			want: UpSlice{
@@ -189,12 +181,14 @@ func Test_upDevel(t *testing.T) {
 						Repository:    "devel",
 						LocalVersion:  "2.0.0",
 						RemoteVersion: "latest-commit",
+						LastModified:  1700000000,
 					},
 					{
 						Name:          "hello4",
 						Repository:    "devel",
 						LocalVersion:  "4.0.0",
 						RemoteVersion: "latest-commit",
+						LastModified:  1700000004,
 					},
 				},
 			},
@@ -204,7 +198,7 @@ func Test_upDevel(t *testing.T) {
 			finalLen: 1,
 			args: args{
 				cached: &vcs.Mock{ToUpgradeReturn: []string{}},
-				remote: map[string]alpm.IPackage{
+				remote: map[string]alpm.Package{
 					"hello": &mock.Package{PName: "hello", PVersion: "2.0.0"},
 				},
 				aurdata: map[string]*aur.Pkg{"hello": {Version: "2.0.0", Name: "hello"}},
@@ -218,7 +212,7 @@ func Test_upDevel(t *testing.T) {
 				cached: &vcs.Mock{
 					ToUpgradeReturn: []string{"hello"},
 				},
-				remote: map[string]alpm.IPackage{
+				remote: map[string]alpm.Package{
 					"hello": &mock.Package{PName: "hello", PVersion: "2.0.0", PShouldIgnore: true},
 				},
 				aurdata: map[string]*aur.Pkg{"hello": {Version: "2.0.0", Name: "hello"}},

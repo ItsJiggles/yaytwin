@@ -23,22 +23,16 @@ jobs:
           - linux/arm64
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
@@ -46,10 +40,9 @@ jobs:
 
       - name: Extract metadata for Docker
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6.1.0
         with:
           images: |
-            ${{ env.REGISTRY_IMAGE }}
             ghcr.io/${{ env.REGISTRY_IMAGE }}
           tags: |
             type=raw,value=latest
@@ -57,13 +50,13 @@ jobs:
 
       - name: Build and push by digest
         id: build
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
           context: .
           file: ci.Dockerfile
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
-          outputs: type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=ghcr.io/${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest
         run: |
@@ -72,7 +65,7 @@ jobs:
           echo -n "$digest" > "/tmp/digests/$(echo "${{ matrix.platform }}" | tr '/' '_')"
 
       - name: Upload digest
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: digest-${{ matrix.platform == 'linux/amd64' && 'amd64' || matrix.platform == 'linux/arm/v7' && 'armv7' || 'arm64' }}
           path: /tmp/digests/*
@@ -84,23 +77,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download digests
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: digest-*
           merge-multiple: true
           path: /tmp/digests
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
@@ -108,10 +95,9 @@ jobs:
 
       - name: Extract metadata for Docker
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6.1.0
         with:
           images: |
-            ${{ env.REGISTRY_IMAGE }}
             ghcr.io/${{ env.REGISTRY_IMAGE }}
           tags: |
             type=raw,value=latest
@@ -121,23 +107,17 @@ jobs:
         env:
           DOCKER_CLI_EXPERIMENTAL: enabled
         run: |
-          # Extract Docker Hub tags
-          DH_TAGS=$(echo '${{ steps.meta.outputs.tags }}' | grep -v "^ghcr.io" | xargs -I {} echo "-t {}")
-          
           # Extract GitHub Container Registry tags
-          GHCR_TAGS=$(echo '${{ steps.meta.outputs.tags }}' | grep "^ghcr.io" | xargs -I {} echo "-t {}")
+          GHCR_TAGS=$(echo '${{ steps.meta.outputs.tags }}' | xargs -I {} echo "-t {}")
           
           # Create a manifest list using the image digests from /tmp/digests/*
           DIGESTS=$(for file in /tmp/digests/*; do
-            echo -n "${{ env.REGISTRY_IMAGE }}@$(cat $file) "
+            echo -n "ghcr.io/${{ env.REGISTRY_IMAGE }}@$(cat $file) "
           done)
-          
-          # Create the manifest list for Docker Hub
-          docker buildx imagetools create $DH_TAGS $DIGESTS
           
           # Create the manifest list for GitHub Container Registry
           docker buildx imagetools create $GHCR_TAGS $DIGESTS
 
       - name: Inspect image
         run: |
-          docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:latest
+          docker buildx imagetools inspect ghcr.io/${{ env.REGISTRY_IMAGE }}:latest

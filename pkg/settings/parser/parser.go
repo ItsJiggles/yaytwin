@@ -379,7 +379,6 @@ func isArg(arg string) bool {
 	case "afterclean", "cleanafter":
 	case "keepsrc":
 	case "devel":
-	case "timeupdate":
 	case "topdown":
 	case "bottomup":
 	case "completioninterval":
@@ -612,6 +611,10 @@ func (a *Arguments) parseStdin() error {
 
 	for scanner.Scan() {
 		a.AddTarget(scanner.Text())
+	}
+
+	if err := scanner.Err(); err != nil {
+		return err
 	}
 
 	return os.Stdin.Close()

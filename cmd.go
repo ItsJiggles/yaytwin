@@ -1,14 +1,13 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
-	alpm "github.com/Jguer/go-alpm/v2"
+	alpm "github.com/Jguer/dyalpm"
 	"github.com/leonelquinteros/gotext"
 
 	"github.com/Jguer/yay/v12/pkg/completion"
@@ -119,8 +118,6 @@ Permanent configuration options:
     --sudo                <file>  sudo command to use
     --sudoflags           <flags> Pass arguments to sudo
     --sudoloop            Loop sudo calls in the background to avoid timeout
-
-    --timeupdate          Check packages' AUR page for changes during sysupgrade
 
 show specific options (used with -P):
     -c --complete         Used for completions
@@ -269,7 +266,7 @@ func handlePrint(ctx context.Context, run *runtime.Runtime, cmdArgs *parser.Argu
 			dbExecutor.LastBuildTime(), run.Cfg.BottomUp, double, quiet)
 	case cmdArgs.ExistsArg("c", "complete"):
 		return completion.Show(ctx, run.HTTPClient, dbExecutor,
-			run.Cfg.AURURL, run.Cfg.CompletionPath, run.Cfg.CompletionInterval, cmdArgs.ExistsDouble("c", "complete"))
+			run.Cfg.AURURL, run.Cfg.CompletionPath, run.Cfg.CompletionInterval, cmdArgs.ExistsDouble("c", "complete"), run.Logger)
 	case cmdArgs.ExistsArg("s", "stats"):
 		return localStatistics(ctx, run, dbExecutor)
 	}
@@ -329,11 +326,7 @@ func handleUpgrade(ctx context.Context,
 func handleBuild(ctx context.Context,
 	run *runtime.Runtime, dbExecutor db.Executor, cmdArgs *parser.Arguments,
 ) error {
-	if cmdArgs.ExistsArg("i", "install") {
-		return installLocalPKGBUILD(ctx, run, cmdArgs, dbExecutor)
-	}
-
-	return nil
+	return installLocalPKGBUILD(ctx, run, cmdArgs, dbExecutor)
 }
 
 func handleSync(ctx context.Context, run *runtime.Runtime, cmdArgs *parser.Arguments, dbExecutor db.Executor) error {
@@ -427,20 +420,11 @@ func syncList(ctx context.Context, run *runtime.Runtime,
 	}
 
 	if run.Cfg.Mode.AtLeastAUR() && (len(cmdArgs.Targets) == 0 || aur) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, run.Cfg.AURURL+"/packages.gz", http.NoBody)
+		scanner, err := download.GetPackageScanner(ctx, httpClient, run.Cfg.AURURL, run.Logger)
 		if err != nil {
 			return err
 		}
-
-		resp, err := httpClient.Do(req)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-
-		scanner := bufio.NewScanner(resp.Body)
-
-		scanner.Scan()
+		defer scanner.Close()
 
 		for scanner.Scan() {
 			name := scanner.Text()

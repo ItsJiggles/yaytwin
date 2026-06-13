@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"sync"
 
 	"github.com/Jguer/yay/v12/pkg/completion"
 	"github.com/Jguer/yay/v12/pkg/db"
@@ -41,6 +42,9 @@ func (o *OperationService) Run(ctx context.Context, run *runtime.Runtime,
 	cmdArgs *parser.Arguments,
 	targets []map[string]*dep.InstallInfo, excluded []string,
 ) error {
+	var completionWg sync.WaitGroup
+	defer completionWg.Wait()
+
 	if len(targets) == 0 {
 		o.logger.Println("", gotext.Get("there is nothing to do"))
 		return nil
@@ -49,6 +53,12 @@ func (o *OperationService) Run(ctx context.Context, run *runtime.Runtime,
 	installer := build.NewInstaller(o.dbExecutor, run.CmdBuilder,
 		run.VCSStore, o.cfg.Mode, o.cfg.ReBuild,
 		cmdArgs.ExistsArg("w", "downloadonly"), run.Logger.Child("installer"))
+
+	shouldInstall := !cmdArgs.ExistsArg("w", "downloadonly")
+	if cmdArgs.Op == "B" && !cmdArgs.ExistsArg("i", "install") {
+		shouldInstall = false
+	}
+	installer.SetInstallBuiltPackages(shouldInstall)
 
 	pkgBuildDirs, errInstall := preparer.Run(ctx, run, targets)
 	if errInstall != nil {
@@ -63,13 +73,18 @@ func (o *OperationService) Run(ctx context.Context, run *runtime.Runtime,
 		installer.AddPostInstallHook(cleanAURDirsFunc)
 	}
 
-	go func() {
-		errComp := completion.Update(ctx, run.HTTPClient, o.dbExecutor,
-			o.cfg.AURURL, o.cfg.CompletionPath, o.cfg.CompletionInterval, false)
-		if errComp != nil {
-			o.logger.Warnln(errComp)
-		}
-	}()
+	if completion.NeedsUpdate(o.cfg.CompletionPath, o.cfg.CompletionInterval, false) {
+		completionWg.Add(1)
+		go func() {
+			defer completionWg.Done()
+
+			errComp := completion.UpdateCache(ctx, run.HTTPClient, o.dbExecutor,
+				o.cfg.AURURL, o.cfg.CompletionPath, o.logger)
+			if errComp != nil {
+				o.logger.Warnln(errComp)
+			}
+		}()
+	}
 
 	srcInfo, errInstall := srcinfo.NewService(o.dbExecutor, o.cfg,
 		o.logger.Child("srcinfo"), run.CmdBuilder, run.VCSStore, pkgBuildDirs)
