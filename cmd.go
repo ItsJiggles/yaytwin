@@ -26,12 +26,12 @@ import (
 )
 
 func usage(logger *text.Logger) {
-	logger.Println(`Usage:
+	logger.Println(`📦 Usage:
     yay
     yay <operation> [...]
     yay <package(s)>
 
-operations:
+🛠️ operations:
     yay {-h --help}
     yay {-V --version}
     yay {-D --database}    <options> <package(s)>
@@ -42,7 +42,7 @@ operations:
     yay {-T --deptest}     [options] [package(s)]
     yay {-U --upgrade}     [options] <file(s)>
 
-New operations:
+✨ New operations:
     yay {-B --build}       [options] [dir]
     yay {-G --getpkgbuild} [options] [package(s)]
     yay {-P --show}        [options]
@@ -52,11 +52,11 @@ New operations:
 If no operation is specified 'yay -Syu' will be performed
 If no operation is specified and targets are provided, -Y will be assumed
 
-New options:
+🎛️ New options:
     -N --repo             Assume targets are from the repositories
     -a --aur              Assume targets are from the AUR
 
-Permanent configuration options:
+⚙️ Permanent configuration options:
     --save                Causes the following options to be saved back to the
                           config file when used
 
